@@ -1,0 +1,118 @@
+min_version = "2025.1.0"
+
+[tools]
+bun = "1.3.14"
+go = "1.26.6"
+
+[tasks.build]
+description = "Build the Go application"
+run = '''
+rm -f twitch-notifications
+VERSION="$(printf 'r%s.%s' "$(git rev-list --count HEAD 2>/dev/null || printf 0)" "$(git rev-parse --short=7 HEAD 2>/dev/null || printf dev)")"
+go build -v -ldflags="-X 'main.Version=$VERSION'" -o twitch-notifications .
+'''
+
+[tasks."build:tui"]
+description = "Build the TUI binary"
+dir = "tui"
+run = "bun install --frozen-lockfile && bun run build"
+
+[tasks."build:all"]
+description = "Build the Go application and TUI"
+depends = ["build", "build:tui"]
+
+[tasks.install]
+description = "Install the Go application"
+run = "go install ."
+
+[tasks.run]
+description = "Build and run the application"
+depends = ["build"]
+run = "./twitch-notifications"
+
+[tasks."run:server"]
+description = "Build and run the notification server"
+depends = ["build"]
+run = "./twitch-notifications serve"
+
+[tasks."serve:start"]
+description = "Start the development server through pitchfork"
+run = "pitchfork start backend"
+
+[tasks."serve:status"]
+description = "Show the development server status"
+run = "pitchfork status backend"
+
+[tasks."serve:logs"]
+description = "Follow development server logs"
+run = "pitchfork logs -t backend"
+
+[tasks."serve:restart"]
+description = "Restart the development server"
+run = "pitchfork restart backend"
+
+[tasks."serve:stop"]
+description = "Stop the development server and restore the packaged daemon"
+run = "pitchfork stop backend"
+
+[tasks."run:tui"]
+description = "Build and run the TUI"
+depends = ["build:tui"]
+run = "./tui/dist/twitch-notifications-tui"
+
+[tasks.test]
+description = "Run Go tests"
+run = "go test -v ./..."
+
+[tasks."lint:go"]
+description = "Check Go formatting and run go vet"
+run = '''
+unformatted="$(gofmt -l .)"
+if [ -n "$unformatted" ]; then
+  printf 'Go files need formatting:\n%s\n' "$unformatted"
+  exit 1
+fi
+go vet ./...
+'''
+
+[tasks."lint:tui"]
+description = "Check TUI formatting and types"
+dir = "tui"
+run = '''
+bun install --frozen-lockfile
+bun run format:check
+bun run typecheck
+'''
+
+[tasks."lint:all"]
+description = "Run all linters"
+depends = ["lint:go", "lint:tui"]
+
+[tasks.check]
+description = "Run all linters and tests"
+depends = ["lint:all", "test"]
+
+[tasks.clean]
+description = "Remove build artefacts"
+run = "rm -f twitch-notifications tui/dist/twitch-notifications-tui"
+
+[tasks."clean:dist"]
+description = "Remove package build artefacts"
+run = "rm -rf build dist"
+
+[tasks.deps]
+description = "Install all dependencies"
+run = '''
+go mod tidy
+(cd tui && bun install)
+'''
+
+[tasks."package:arch"]
+description = "Create the Arch Linux package"
+depends = ["clean:dist", "build:all"]
+run = '''
+VERSION="$(printf 'r%s.%s' "$(git rev-list --count HEAD 2>/dev/null || printf 0)" "$(git rev-parse --short=7 HEAD 2>/dev/null || printf dev)")"
+export VERSION
+chmod +x ./.scripts/linux/create-arch.sh
+./.scripts/linux/create-arch.sh
+'''

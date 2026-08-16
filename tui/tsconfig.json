@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "outDir": "dist",
+    "rootDir": "src",
+    "types": ["bun-types"],
+    "plugins": [
+      { "name": "@effect/language-service", "ignoreEffectWarningsInTscExitCode": true }
+    ]
+  },
+  "include": ["src"]
+}

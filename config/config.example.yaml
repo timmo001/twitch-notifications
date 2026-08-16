@@ -1,0 +1,38 @@
+# Twitch Notifications Configuration
+
+# Watched channels now live in channels.yml in the same directory.
+# The app still accepts legacy inline watched_channels here if channels.yml is absent.
+
+# Send a notification when the application starts
+notify_on_startup: true
+
+# Polling interval in seconds for overflow channels (channels 11+)
+# Due to Twitch's EventSub limit of 10 subscriptions, channels beyond
+# the first 10 are monitored via periodic API polling instead of real-time
+# Default is 60 seconds. Lower values = more responsive but more API calls
+poll_interval: 60
+
+# Periodically restart the application every hour to keep it healthy
+# This helps recover from any accumulated state issues over long uptimes
+# Requires a process manager (e.g. systemd with Restart=always) to restart the app
+# Default is true
+periodic_restart: true
+
+# Optional: Path to a sound file to play with notifications
+# Supports common audio formats (WAV, OGG, MP3, etc.)
+# Can use ~ for home directory or environment variables like ${HOME}
+# Examples:
+#   sound_file: "/usr/share/sounds/freedesktop/stereo/message.oga"
+#   sound_file: "~/sounds/notification.wav"
+#   sound_file: "${HOME}/sounds/notification.ogg"
+# Leave empty or omit to disable sound
+# sound_file: ""
+
+# Twitch API credentials
+# You can use environment variables like ${TWITCH_CLIENT_ID}
+# Note: access_token is optional if refresh_token is provided
+twitch:
+    client_id: "${TWITCH_CLIENT_ID}"
+    client_secret: "${TWITCH_CLIENT_SECRET}"
+    access_token: "${TWITCH_ACCESS_TOKEN}"  # Optional if refresh_token is set
+    refresh_token: "${TWITCH_REFRESH_TOKEN}"  # Optional, used to obtain access token

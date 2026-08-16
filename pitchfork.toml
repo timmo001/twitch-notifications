@@ -1,0 +1,5 @@
+# Pitchfork keeps the development daemon outside the invoking agent process.
+
+[daemons.backend]
+run = ".scripts/linux/pitchfork-backend-dev.sh"
+ready_delay = 3

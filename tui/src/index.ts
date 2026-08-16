@@ -1,0 +1,94 @@
+import { Effect } from "effect";
+import { createCliRenderer } from "@opentui/core";
+import { createCommandRunner } from "./services/CommandRunner.js";
+import { loadTheme } from "./theme.js";
+import { Toast } from "./tui/Toast.js";
+import { App } from "./tui/App.js";
+import { parseFlags, resolveSubcommand, printHelp } from "./flags.js";
+import { menuItemsById } from "./menu.js";
+
+const log = (msg: string) => console.error(`[twitch-notifications-tui] ${msg}`);
+
+const flags = parseFlags(process.argv.slice(2));
+
+if (flags.help) {
+  printHelp();
+  process.exit(0);
+}
+
+// Resolve subcommand to determine startup behaviour
+let executeItemId: string | undefined;
+
+if (flags.subcommand) {
+  const resolved = resolveSubcommand(flags.subcommand);
+  if (!resolved) {
+    console.error(`Unknown subcommand: ${flags.subcommand}`);
+    printHelp();
+    process.exit(1);
+  }
+
+  const item = menuItemsById.get(resolved.itemId);
+  if (item) {
+    const { action } = item;
+    if (
+      action.type === "command" ||
+      action.type === "silent" ||
+      action.type === "notify" ||
+      action.type === "replace" ||
+      action.type === "submenu"
+    ) {
+      executeItemId = resolved.itemId;
+    }
+  }
+}
+
+/** Bootstrap: create imperative dependencies and start the TUI */
+const program = Effect.gen(function* () {
+  log("Starting...");
+
+  const theme = yield* loadTheme;
+  log("Theme loaded");
+
+  log("Creating renderer...");
+  const renderer = yield* Effect.promise(() =>
+    createCliRenderer({
+      exitOnCtrlC: true,
+      screenMode: "alternate-screen",
+      useMouse: false,
+      backgroundColor: theme.bg,
+      onDestroy: () => process.exit(0),
+    }),
+  );
+  log("Renderer created");
+
+  const toast = new Toast(renderer, theme);
+  const commandRunner = createCommandRunner(renderer, toast);
+
+  const app = new App(
+    { renderer, theme, commandRunner },
+    {
+      title: "Twitch Notifications",
+      subtitle: "manage channels and server",
+      executeItemId,
+    },
+  );
+  log("App created");
+
+  // Set terminal tab title
+  process.stdout.write("\x1b]0;Twitch Notifications\x07");
+
+  log("Starting renderer...");
+  renderer.start();
+  log("Renderer started — TUI is live");
+
+  // Keep alive until the process exits
+  return yield* Effect.never;
+});
+
+log("Launching...");
+
+Effect.runPromise(program).catch((err) => {
+  log(`Fatal error: ${err}`);
+  console.error(err);
+  process.exit(1);
+});

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Twitch Notifications
+Comment=Monitor Twitch channels and get desktop notifications when they go live
+Exec=twitch-notifications
+Icon=twitch-notifications
+Type=Application
+Categories=Network;Video;
+X-GNOME-Autostart-enabled=false
+

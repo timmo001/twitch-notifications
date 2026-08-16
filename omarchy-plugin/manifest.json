@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "id": "timmo.twitch",
+  "name": "Twitch Notifications",
+  "version": "1.0.0",
+  "author": "Timmo",
+  "license": "Apache-2.0",
+  "description": "Twitch live status, channels, and notification controls",
+  "kinds": [
+    "service",
+    "bar-widget"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Twitch Notifications",
+    "description": "Shows live Twitch channels and notification controls",
+    "category": "Media",
+    "allowMultiple": false,
+    "defaultSection": "center",
+    "defaults": {
+      "primaryOnly": false,
+      "primaryOutput": "",
+      "revealOnHover": true
+    },
+    "schema": [
+      {
+        "key": "primaryOnly",
+        "type": "boolean",
+        "label": "Primary output only",
+        "defaultValue": false
+      },
+      {
+        "key": "primaryOutput",
+        "type": "string",
+        "label": "Primary output",
+        "defaultValue": "",
+        "description": "Optional output name used when primary output only is enabled."
+      },
+      {
+        "key": "revealOnHover",
+        "type": "boolean",
+        "label": "Reveal active state on hover",
+        "defaultValue": true
+      }
+    ]
+  }
+}

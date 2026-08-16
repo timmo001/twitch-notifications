@@ -1,0 +1,25 @@
+# Configuration
+.env
+config/config.yaml
+config/channels.yml
+!config/config.example.yaml
+!config/channels.example.yml
+
+# Dependencies
+tui/node_modules/
+
+# Builds
+twitch-notifications
+twitch-notifications.log
+tui/dist/
+build/
+dist/
+
+# LLMs
+.claude/
+.opencode/
+
+# Editors
+.idea/
+.vscode/
+!.vscode/extensions.json

@@ -1,0 +1,14 @@
+---
+# Twitch Notifications watched channels
+# ORDER MATTERS: First 10 channels get real-time EventSub notifications
+# Channels 11+ are monitored via polling (see poll_interval in config.yaml)
+# Each channel is specified as an object with 'name' and 'open' property
+# - 'open: true' - Automatically opens browser when this channel goes live
+# - 'open: false' - Sends notification but doesn't open browser (default)
+watched_channels:
+    - name: alveussanctuary
+      open: false
+  # - name: streamer2
+  #   open: true
+  # - name: streamer3
+  #   open: false

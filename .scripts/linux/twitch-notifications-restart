@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ ${TWITCH_NOTIFICATIONS_RESTART_DETACHED:-0} != 1 ]]; then
+  export TWITCH_NOTIFICATIONS_RESTART_DETACHED=1
+  setsid "$0" "$@" >/dev/null 2>&1 &
+  exit 0
+fi
+
+pkill -f '/usr/bin/[t]witch-notifications( |$)' >/dev/null 2>&1 \
+  || pkill -f '(^| )[t]witch-notifications( |$)' >/dev/null 2>&1 \
+  || true
+for _ in {1..50}; do
+  if ! pgrep -f '/usr/bin/[t]witch-notifications( |$)' >/dev/null 2>&1 \
+      && ! pgrep -f '(^| )[t]witch-notifications( |$)' >/dev/null 2>&1; then
+    exec uwsm-app -s b -- twitch-notifications >/dev/null 2>&1
+  fi
+  sleep 0.1
+done
+
+printf 'twitch-notifications did not stop within five seconds\n' >&2
+exit 1
