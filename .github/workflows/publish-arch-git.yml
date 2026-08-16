@@ -1,0 +1,44 @@
+---
+name: Publish Arch git package
+
+# yamllint disable-line rule:truthy
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "*.go"
+      - go.mod
+      - go.sum
+      - LICENSE
+      - mise.toml
+      - "auth/**"
+      - "config/**"
+      - "notify/**"
+      - "tray/**"
+      - "tui/**"
+      - "twitch/**"
+      - "utils/**"
+      - .scripts/linux/PKGBUILD
+      - .scripts/linux/twitch-notifications-recheck
+      - .scripts/linux/twitch-notifications-restart
+      - .scripts/linux/twitch-notifications.desktop
+      - .github/workflows/publish-arch-git.yml
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-arch-git-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish Arch package (twitch-notifications-git)
+    # yamllint disable-line rule:line-length
+    uses: timmo001/workflows/.github/workflows/build-arch-package.yml@48bae43921a0b471eac35324eda0c8dc690927e8  # master
+    with:
+      package-name: twitch-notifications-git
+    secrets:
+      ARCH_REPO_DISPATCH_TOKEN: ${{ secrets.ARCH_REPO_DISPATCH_TOKEN }}

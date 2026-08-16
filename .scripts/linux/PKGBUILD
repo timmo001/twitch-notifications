@@ -1,37 +1,46 @@
 #!/bin/sh
-# PKGBUILD for twitch-notifications-git (binary) package
-
+# Maintainer: Aidan Timson (Timmo) <aidan@timmo.dev>
 pkgname=twitch-notifications-git
-pkgver=${ARCH_PKGVER}
+pkgver=0.1.0.r1.abc123
 pkgrel=1
-pkgdesc="A Go daemon application that monitors Twitch channels you follow and sends desktop notifications when they go live"
-source=('twitch-notifications' 'twitch-notifications-tui' 'twitch-notifications-recheck' 'twitch-notifications-restart' 'twitch-notifications.desktop' 'LICENSE' 'twitch-notifications.svg')
+pkgdesc="Twitch live notifications and desktop controls (git version)"
 arch=('x86_64')
-
 url="https://github.com/timmo001/twitch-notifications"
 license=('Apache-2.0')
 keywords=('twitch' 'notifications' 'desktop' 'daemon' 'livestream')
-depends=('libnotify' 'uwsm')
+makedepends=('git' 'go' 'bun')
+depends=('glibc' 'libnotify' 'uwsm')
 provides=('twitch-notifications')
 conflicts=('twitch-notifications')
 options=('!strip')
+source=("$pkgname::git+https://github.com/timmo001/twitch-notifications.git")
+md5sums=('SKIP')
+
+pkgver() {
+  cd "$pkgname"
+  printf '0.1.0.r%s.g%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+}
 
 build() {
-  # No-op: we package a prebuilt binary provided via source=("twitch-notifications" ...)
-  :
+  cd "$pkgname"
+
+  local version
+  version="$(printf 'r%s.%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)")"
+  go build -v -ldflags="-X 'main.Version=${version}'" -o twitch-notifications .
+
+  cd tui
+  bun install --frozen-lockfile
+  bun run build
 }
 
 package() {
-  install -dm755 "$pkgdir/usr/bin"
-  install -dm755 "$pkgdir/usr/share/applications"
-  install -dm755 "$pkgdir/usr/share/licenses/$pkgname"
-  install -dm755 "$pkgdir/usr/share/icons/hicolor/scalable/apps"
-  
+  cd "$srcdir/$pkgname"
+
   install -Dm755 twitch-notifications "$pkgdir/usr/bin/twitch-notifications"
-  install -Dm755 twitch-notifications-tui "$pkgdir/usr/bin/twitch-notifications-tui"
-  install -Dm755 twitch-notifications-recheck "$pkgdir/usr/bin/twitch-notifications-recheck"
-  install -Dm755 twitch-notifications-restart "$pkgdir/usr/bin/twitch-notifications-restart"
-  install -Dm644 twitch-notifications.desktop "$pkgdir/usr/share/applications/twitch-notifications.desktop"
+  install -Dm755 tui/dist/twitch-notifications-tui "$pkgdir/usr/bin/twitch-notifications-tui"
+  install -Dm755 .scripts/linux/twitch-notifications-recheck "$pkgdir/usr/bin/twitch-notifications-recheck"
+  install -Dm755 .scripts/linux/twitch-notifications-restart "$pkgdir/usr/bin/twitch-notifications-restart"
+  install -Dm644 .scripts/linux/twitch-notifications.desktop "$pkgdir/usr/share/applications/twitch-notifications.desktop"
+  install -Dm644 tray/icon.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/twitch-notifications.svg"
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
-  install -Dm644 twitch-notifications.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/twitch-notifications.svg"
 }

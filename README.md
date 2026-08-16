@@ -19,21 +19,27 @@ A Go daemon application that monitors Twitch channels you follow and sends deskt
 
 ## Installation
 
-1. Clone the repository:
+On Arch Linux with the signed `timmo` repository configured:
 
 ```bash
-git clone <repository-url>
+sudo pacman -S twitch-notifications-git
+```
+
+For development, clone the repository:
+
+```bash
+git clone https://github.com/timmo001/twitch-notifications.git
 cd twitch-notifications
 ```
 
-1. Install the pinned tools and project dependencies:
+Install the pinned tools and project dependencies:
 
 ```bash
 mise install
 mise run deps
 ```
 
-1. Build the application and TUI:
+Build the application and TUI:
 
 ```bash
 mise run build:all

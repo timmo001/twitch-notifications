@@ -4,10 +4,11 @@ Instructions for coding agents working in this repository.
 
 ## Scope
 
-- This repo is the source code for `twitch-notifications` and its private
+- This repo is the source code for `twitch-notifications` and its public
   rolling package, `twitch-notifications-git`.
 - Packaging is part of the normal workflow for this repo.
-- Do not publish package artifacts from here directly to machines; publish through the private pacman repo.
+- Do not publish package artifacts from here directly to machines; publish
+  through the signed `timmo` pacman repository.
 
 ## Build And Package
 
@@ -16,7 +17,8 @@ Instructions for coding agents working in this repository.
 - Lint: `mise run lint:all`
 - Package: `mise run package:arch`
 - Never install this application with `go install`. It can leave a stale binary in the Go bin directory that takes precedence over the packaged version.
-- Install or update the application only through the private pacman package workflow below.
+- Install or update the application only through the public package workflow
+  below.
 
 ## Background Development Server
 
@@ -29,28 +31,23 @@ Instructions for coding agents working in this repository.
 
 ## Publish Workflow
 
-Preferred path:
-
-- Run `mise run package:arch`
-- Run `dot private-pkg-publish --skip-build twitch-notifications-git`
-- Add `--install` when the package should also be installed locally.
-- This commits and pushes `~/repos/private-arch-repo` by default; use `--no-git` only when the user wants a local-only publish.
-
-Manual path:
-
-1. Run `mise run package:arch`
-2. Copy the `twitch-notifications-git` runtime package from `dist/` into
-   `~/repos/private-arch-repo`
-3. Run `repo-add ~/repos/private-arch-repo/timmo-private.db.tar.gz ~/repos/private-arch-repo/*.pkg.tar.zst`
-4. Commit and push `~/repos/private-arch-repo`
+- Push an allowlisted source change to `main`, or dispatch
+  `.github/workflows/publish-arch-git.yml` manually.
+- The workflow builds the exact source SHA through
+  `timmo001/workflows/.github/workflows/build-arch-package.yml`, then dispatches
+  the validated package to `timmo001/arch-repo`.
+- Install or update only after publication succeeds, through pacman from the
+  signed `timmo` repository.
+- `mise run package:arch` remains available for local package validation only.
 
 ## Notes
 
-- Omit `*-debug-*.pkg.tar.zst` from the private package repo unless the user explicitly wants debug packages published.
 - `main` publishes only the rolling `twitch-notifications-git` package. Reserve
   the base `twitch-notifications` name for a future stable release channel.
-- `dot private-pkg-publish` removes the older runtime artifact for this package, regenerates the repo db, syncs the mirror, refreshes pacman metadata, and commits/pushes the private package repo by default.
-- If this repo becomes public and gains maintained workflows for AUR or other public package publication, stop publishing it to the private pacman repo and switch the documented workflow to the public package path instead.
+- Publication requires the repository secret `ARCH_REPO_DISPATCH_TOKEN`, scoped
+  only to dispatching `timmo001/arch-repo`.
+- The public package allowlist lives in
+  `timmo001/arch-repo/config/packages.json`.
 
 ## Safety
 
