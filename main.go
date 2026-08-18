@@ -60,6 +60,7 @@ type barJSONStatusPayload struct {
 type statusJSONChannel struct {
 	Login        string `json:"login"`
 	Title        string `json:"title"`
+	GameName     string `json:"gameName,omitempty"`
 	ThumbnailURL string `json:"thumbnailUrl,omitempty"`
 	Live         bool   `json:"live"`
 	AutoOpen     bool   `json:"autoOpen"`
@@ -157,6 +158,7 @@ func buildFollowedLiveChannels(streams []twitch.LiveStream, watchedChannels []co
 		channels = append(channels, statusJSONChannel{
 			Login:        stream.BroadcasterUserLogin,
 			Title:        stream.StreamTitle,
+			GameName:     stream.GameName,
 			ThumbnailURL: stream.ThumbnailURL,
 			Live:         true,
 		})
@@ -1399,6 +1401,7 @@ func runNotifier(ctx context.Context, cfg *config.Config, configPath string, sil
 				channels = append(channels, statusJSONChannel{
 					Login:        login,
 					Title:        strings.TrimSpace(strings.ReplaceAll(stream.StreamTitle, "\n", " ")),
+					GameName:     stream.GameName,
 					ThumbnailURL: stream.ThumbnailURL,
 					Live:         true,
 				})

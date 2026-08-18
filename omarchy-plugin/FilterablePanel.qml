@@ -38,7 +38,7 @@ Item {
     if (!term) return entries || []
     var source = entries || []
     var matches = source.filter(function(entry) {
-      return [entry.primaryText, entry.secondaryText].join(" ").toLowerCase().indexOf(term) >= 0
+      return [entry.primaryText, entry.secondaryText, entry.tertiaryText].join(" ").toLowerCase().indexOf(term) >= 0
     })
     return matches.sort(function(a, b) {
       var aSection = String(a.section || "")

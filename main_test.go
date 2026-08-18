@@ -18,12 +18,12 @@ func TestBuildFollowedLiveChannelsExcludesWatchedChannels(t *testing.T) {
 	channels := buildFollowedLiveChannels(
 		[]twitch.LiveStream{
 			{BroadcasterUserLogin: "watched", StreamTitle: "Configured"},
-			{BroadcasterUserLogin: "other", StreamTitle: "Other stream", ThumbnailURL: "https://example.com/other.jpg"},
+			{BroadcasterUserLogin: "other", StreamTitle: "Other stream", GameName: "Other game", ThumbnailURL: "https://example.com/other.jpg"},
 		},
 		[]config.WatchedChannel{{Name: "WATCHED"}},
 	)
 
-	want := []statusJSONChannel{{Login: "other", Title: "Other stream", ThumbnailURL: "https://example.com/other.jpg", Live: true}}
+	want := []statusJSONChannel{{Login: "other", Title: "Other stream", GameName: "Other game", ThumbnailURL: "https://example.com/other.jpg", Live: true}}
 	if !reflect.DeepEqual(channels, want) {
 		t.Fatalf("buildFollowedLiveChannels() = %#v, want %#v", channels, want)
 	}
@@ -36,8 +36,8 @@ func TestBuildStatusJSONPayload(t *testing.T) {
 		true,
 		2,
 		[]statusJSONChannel{
-			{Login: "second", Title: "A title: with a colon", ThumbnailURL: "https://example.com/second.jpg", Live: true},
-			{Login: "FIRST", Title: "First title", ThumbnailURL: "https://example.com/first.jpg", Live: true},
+			{Login: "second", Title: "A title: with a colon", GameName: "Second game", ThumbnailURL: "https://example.com/second.jpg", Live: true},
+			{Login: "FIRST", Title: "First title", GameName: "First game", ThumbnailURL: "https://example.com/first.jpg", Live: true},
 		},
 		[]config.WatchedChannel{
 			{Name: "first", Open: boolPointer(true)},
@@ -51,8 +51,8 @@ func TestBuildStatusJSONPayload(t *testing.T) {
 		State:     "live",
 		LiveCount: 2,
 		Channels: []statusJSONChannel{
-			{Login: "first", Title: "First title", ThumbnailURL: "https://example.com/first.jpg", Live: true, AutoOpen: true},
-			{Login: "second", Title: "A title: with a colon", ThumbnailURL: "https://example.com/second.jpg", Live: true, AutoOpen: false},
+			{Login: "first", Title: "First title", GameName: "First game", ThumbnailURL: "https://example.com/first.jpg", Live: true, AutoOpen: true},
+			{Login: "second", Title: "A title: with a colon", GameName: "Second game", ThumbnailURL: "https://example.com/second.jpg", Live: true, AutoOpen: false},
 			{Login: "offline", Title: "", Live: false, AutoOpen: false},
 		},
 	}

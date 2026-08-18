@@ -59,7 +59,8 @@ Panel {
         section: "channel",
         value: channel,
         primaryText: channel.login,
-        secondaryText: channel.title
+        secondaryText: channel.title,
+        tertiaryText: channel.gameName
       })
     }
     var followed = service ? service.followedLive : []
@@ -71,7 +72,8 @@ Panel {
         section: "followed",
         value: followedChannel,
         primaryText: followedChannel.login,
-        secondaryText: followedChannel.title
+        secondaryText: followedChannel.title,
+        tertiaryText: followedChannel.gameName
       })
     }
     return rows
@@ -185,7 +187,7 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: filterController
-    contentWidth: panel.fittedContentWidth(Style.space(430))
+    contentWidth: panel.fittedContentWidth(Style.space(560))
     contentHeight: panel.fittedContentHeight(contentColumn.implicitHeight, Style.space(670))
 
     FilterablePanel {
@@ -498,7 +500,7 @@ Panel {
 
                 Column {
                   id: channelColumn
-                  width: Math.max(0, parent.width - Style.space(104))
+                  width: Math.max(0, parent.width - Style.space(modelData.value.live === true ? 224 : 74))
                   spacing: Style.space(2)
 
                   Text {
@@ -522,15 +524,22 @@ Panel {
                   }
                 }
 
-                Text {
-                  width: Style.space(20)
-                  visible: modelData.value.autoOpen === true
-                  text: "󰋺"
-                  color: Qt.darker(root.contentForeground, 1.3)
-                  font.family: root.contentFontFamily
-                  font.pixelSize: Style.font.caption
-                  horizontalAlignment: Text.AlignHCenter
+                Item {
+                  width: Style.space(140)
+                  height: Style.space(64) * 9 / 16
+                  visible: modelData.value.live === true
+
+                  Text {
+                    anchors.fill: parent
+                    text: String(modelData.value.gameName || "")
+                    color: Qt.darker(root.contentForeground, 1.25)
+                    font.family: root.contentFontFamily
+                    font.pixelSize: Style.font.caption
+                    elide: Text.ElideRight
+                    verticalAlignment: Text.AlignVCenter
+                  }
                 }
+
               }
 
               MouseArea {
