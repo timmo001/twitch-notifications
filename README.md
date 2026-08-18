@@ -162,6 +162,7 @@ The command returns configured channels with live channels first. `state` is
     {
       "login": "pirateSoftware",
       "title": "Stream title",
+      "thumbnailUrl": "https://static-cdn.jtvnw.net/previews-ttv/live_user_piratesoftware-320x180.jpg",
       "live": true,
       "autoOpen": false
     }

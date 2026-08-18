@@ -94,6 +94,7 @@ The plugin runs these local commands:
 
 ```text
 twitch-notifications --status-json
+twitch-notifications --followed-live-json
 twitch-notifications --recheck --open
 twitch-notifications-recheck
 twitch-notifications-restart
@@ -104,8 +105,8 @@ omarchy-launch-webapp <Twitch URL>
 It polls local daemon status every five seconds. The daemon, not the plugin,
 reads and updates Twitch OAuth tokens, accesses Twitch APIs, sends desktop
 notifications, plays configured sounds, and applies channel auto-open rules.
-The plugin opens public Twitch URLs selected by the user. It does not read
-credentials directly, write Omarchy configuration, run privileged commands,
-or install software.
+The plugin opens public Twitch URLs selected by the user and loads live preview
+images from Twitch's public CDN. It does not read credentials directly, write
+Omarchy configuration, run privileged commands, or install software.
 
 [setup]: https://github.com/timmo001/twitch-notifications#configuration

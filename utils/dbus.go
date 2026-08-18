@@ -17,11 +17,12 @@ const (
 
 // DBusService handles DBus IPC for the application
 type DBusService struct {
-	conn           *dbus.Conn
-	recheckHandler func(openBrowser bool)
-	restartHandler func(openBrowser bool)
-	statusHandler  func() (int, []string)
-	mu             sync.RWMutex
+	conn                  *dbus.Conn
+	recheckHandler        func(openBrowser bool)
+	restartHandler        func(openBrowser bool)
+	statusHandler         func() (int, []string)
+	detailedStatusHandler func() (int, string)
+	mu                    sync.RWMutex
 }
 
 // Global DBus service instance
@@ -74,6 +75,11 @@ func NewDBusService() (*DBusService, error) {
 			<arg name="live_count" direction="out" type="i"/>
 			<arg name="live_channels" direction="out" type="as"/>
 		</method>
+		<method name="GetDetailedStatus">
+			<arg name="active" direction="out" type="b"/>
+			<arg name="live_count" direction="out" type="i"/>
+			<arg name="live_channels_json" direction="out" type="s"/>
+		</method>
 		<method name="Ping">
 			<arg direction="out" type="s"/>
 		</method>
@@ -120,6 +126,13 @@ func (s *DBusService) SetStatusHandler(handler func() (int, []string)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.statusHandler = handler
+}
+
+// SetDetailedStatusHandler sets the callback for structured status requests.
+func (s *DBusService) SetDetailedStatusHandler(handler func() (int, string)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.detailedStatusHandler = handler
 }
 
 // Recheck is the DBus method that triggers a live channel check
@@ -185,6 +198,21 @@ func (s *DBusService) GetStatus() (bool, int32, []string, *dbus.Error) {
 	}
 
 	return true, int32(liveCount), liveChannels, nil
+}
+
+// GetDetailedStatus returns structured metadata for currently live channels.
+func (s *DBusService) GetDetailedStatus() (bool, int32, string, *dbus.Error) {
+	s.mu.RLock()
+	handler := s.detailedStatusHandler
+	s.mu.RUnlock()
+
+	liveCount := 0
+	liveChannelsJSON := "[]"
+	if handler != nil {
+		liveCount, liveChannelsJSON = handler()
+	}
+
+	return true, int32(liveCount), liveChannelsJSON, nil
 }
 
 // Ping is a simple health check method

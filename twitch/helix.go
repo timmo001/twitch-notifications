@@ -459,7 +459,13 @@ type LiveStream struct {
 	BroadcasterUserName  string
 	StreamTitle          string
 	GameName             string
+	ThumbnailURL         string
 	StartedAt            time.Time
+}
+
+func streamThumbnailURL(value string) string {
+	value = strings.ReplaceAll(value, "{width}", "320")
+	return strings.ReplaceAll(value, "{height}", "180")
 }
 
 // GetFollowedLiveStreams returns all live streams followed by the authenticated user.
@@ -493,12 +499,13 @@ func (hc *HelixClient) GetFollowedLiveStreams(ctx context.Context, userID string
 
 		var result struct {
 			Data []struct {
-				UserID    string `json:"user_id"`
-				UserLogin string `json:"user_login"`
-				UserName  string `json:"user_name"`
-				Title     string `json:"title"`
-				GameName  string `json:"game_name"`
-				StartedAt string `json:"started_at"`
+				UserID       string `json:"user_id"`
+				UserLogin    string `json:"user_login"`
+				UserName     string `json:"user_name"`
+				Title        string `json:"title"`
+				GameName     string `json:"game_name"`
+				ThumbnailURL string `json:"thumbnail_url"`
+				StartedAt    string `json:"started_at"`
 			} `json:"data"`
 			Pagination struct {
 				Cursor string `json:"cursor"`
@@ -525,6 +532,7 @@ func (hc *HelixClient) GetFollowedLiveStreams(ctx context.Context, userID string
 				BroadcasterUserName:  stream.UserName,
 				StreamTitle:          stream.Title,
 				GameName:             stream.GameName,
+				ThumbnailURL:         streamThumbnailURL(stream.ThumbnailURL),
 				StartedAt:            startedAt,
 			})
 		}
@@ -626,6 +634,7 @@ func (hc *HelixClient) GetLiveStreams(ctx context.Context, channelIDs []string) 
 					BroadcasterUserName:  stream.UserName,
 					StreamTitle:          stream.Title,
 					GameName:             stream.GameName,
+					ThumbnailURL:         streamThumbnailURL(stream.ThumbnailURL),
 					StartedAt:            startedAt,
 				}
 			}

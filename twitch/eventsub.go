@@ -54,6 +54,7 @@ type StreamOnlineEvent struct {
 	BroadcasterUserName  string
 	StreamTitle          string
 	GameName             string
+	ThumbnailURL         string
 	StartedAt            time.Time
 }
 

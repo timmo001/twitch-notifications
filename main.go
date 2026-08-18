@@ -58,10 +58,11 @@ type barJSONStatusPayload struct {
 }
 
 type statusJSONChannel struct {
-	Login    string `json:"login"`
-	Title    string `json:"title"`
-	Live     bool   `json:"live"`
-	AutoOpen bool   `json:"autoOpen"`
+	Login        string `json:"login"`
+	Title        string `json:"title"`
+	ThumbnailURL string `json:"thumbnailUrl,omitempty"`
+	Live         bool   `json:"live"`
+	AutoOpen     bool   `json:"autoOpen"`
 }
 
 type statusJSONPayload struct {
@@ -82,7 +83,7 @@ func printBarJSONStatus(text, tooltip, class string) {
 	fmt.Println(string(encoded))
 }
 
-func buildStatusJSONPayload(active bool, liveCount int, liveChannels []string, watchedChannels []config.WatchedChannel) statusJSONPayload {
+func buildStatusJSONPayload(active bool, liveCount int, liveChannels []statusJSONChannel, watchedChannels []config.WatchedChannel) statusJSONPayload {
 	state := "inactive"
 	if active {
 		state = "active"
@@ -92,17 +93,13 @@ func buildStatusJSONPayload(active bool, liveCount int, liveChannels []string, w
 	}
 
 	liveByLogin := make(map[string]statusJSONChannel, len(liveChannels))
-	for _, value := range liveChannels {
-		login, title, _ := strings.Cut(value, ": ")
-		login = strings.TrimSpace(login)
-		if login == "" {
+	for _, channel := range liveChannels {
+		channel.Login = strings.TrimSpace(channel.Login)
+		if channel.Login == "" {
 			continue
 		}
-		liveByLogin[strings.ToLower(login)] = statusJSONChannel{
-			Login: login,
-			Title: strings.TrimSpace(title),
-			Live:  true,
-		}
+		channel.Live = true
+		liveByLogin[strings.ToLower(channel.Login)] = channel
 	}
 
 	live := make([]statusJSONChannel, 0, len(liveByLogin))
@@ -158,9 +155,10 @@ func buildFollowedLiveChannels(streams []twitch.LiveStream, watchedChannels []co
 			continue
 		}
 		channels = append(channels, statusJSONChannel{
-			Login: stream.BroadcasterUserLogin,
-			Title: stream.StreamTitle,
-			Live:  true,
+			Login:        stream.BroadcasterUserLogin,
+			Title:        stream.StreamTitle,
+			ThumbnailURL: stream.ThumbnailURL,
+			Live:         true,
 		})
 	}
 	return channels
@@ -367,6 +365,50 @@ func getApplicationStatus() (bool, int, []string, error) {
 	return active, int(liveCount), liveChannels, nil
 }
 
+func getDetailedApplicationStatus() (bool, int, []statusJSONChannel, error) {
+	conn, err := dbus.SessionBus()
+	if err != nil {
+		return false, 0, nil, fmt.Errorf("failed to connect to session bus: %w", err)
+	}
+	defer conn.Close()
+
+	obj := conn.Object("com.github.TwitchNotifications", "/com/github/TwitchNotifications")
+	call := obj.Call("com.github.TwitchNotifications.GetDetailedStatus", 0)
+	if call.Err != nil {
+		if dbusErr, ok := call.Err.(*dbus.Error); ok && dbusErr.Name == "org.freedesktop.DBus.Error.UnknownMethod" {
+			active, liveCount, legacyChannels, legacyErr := getApplicationStatus()
+			channels := make([]statusJSONChannel, 0, len(legacyChannels))
+			for _, value := range legacyChannels {
+				login, title, _ := strings.Cut(value, ": ")
+				channels = append(channels, statusJSONChannel{
+					Login: strings.TrimSpace(login),
+					Title: strings.TrimSpace(title),
+					Live:  true,
+				})
+			}
+			return active, liveCount, channels, legacyErr
+		}
+		return false, 0, nil, fmt.Errorf("DBus call failed: %w", call.Err)
+	}
+
+	var active bool
+	var liveCount int32
+	var liveChannelsJSON string
+	if err := call.Store(&active, &liveCount, &liveChannelsJSON); err != nil {
+		return false, 0, nil, fmt.Errorf("failed to read detailed DBus status response: %w", err)
+	}
+
+	var liveChannels []statusJSONChannel
+	if err := json.Unmarshal([]byte(liveChannelsJSON), &liveChannels); err != nil {
+		return false, 0, nil, fmt.Errorf("failed to decode detailed DBus status response: %w", err)
+	}
+	if liveCount < 0 {
+		liveCount = 0
+	}
+
+	return active, int(liveCount), liveChannels, nil
+}
+
 func main() {
 	logCloser, err := utils.SetupLogging("twitch-notifications")
 	if err != nil {
@@ -447,8 +489,8 @@ func main() {
 
 	// Handle status checks: query DBus service and exit.
 	if *status || *statusBarJSON || *statusJSON {
-		active, liveCount, liveChannels, err := getApplicationStatus()
 		if *statusJSON {
+			active, liveCount, liveChannels, err := getDetailedApplicationStatus()
 			if err != nil {
 				active = false
 				liveCount = 0
@@ -467,6 +509,8 @@ func main() {
 			}
 			os.Exit(0)
 		}
+
+		active, liveCount, liveChannels, err := getApplicationStatus()
 		if *statusBarJSON {
 			if err != nil || !active {
 				printBarJSONStatus("󰂚", "Twitch Notifications is inactive", "inactive")
@@ -952,14 +996,14 @@ func runNotifier(ctx context.Context, cfg *config.Config, configPath string, sil
 		channelNameByID[channel.ID] = channel.Username
 	}
 
-	liveTitleByChannelID := make(map[string]string)
-	var liveTitleMu sync.RWMutex
+	liveStreamByChannelID := make(map[string]twitch.LiveStream)
+	var liveStreamMu sync.RWMutex
 
 	// Setup stream online handler (shared between EventSub and Poller)
 	onStreamOnline := func(event twitch.StreamOnlineEvent) {
 		liveStatus.MarkLive(event.BroadcasterUserID)
 
-		if event.BroadcasterUserID != "" && (event.StreamTitle == "" || event.GameName == "") {
+		if event.BroadcasterUserID != "" && (event.StreamTitle == "" || event.GameName == "" || event.ThumbnailURL == "") {
 			liveStreams, err := app.HelixClient().GetLiveStreams(ctx, []string{event.BroadcasterUserID})
 			if err != nil {
 				log.Printf("Failed to hydrate live stream metadata for %s (%s): %v", event.BroadcasterUserName, event.BroadcasterUserLogin, err)
@@ -970,13 +1014,24 @@ func runNotifier(ctx context.Context, cfg *config.Config, configPath string, sil
 				if event.GameName == "" {
 					event.GameName = liveStream.GameName
 				}
+				if event.ThumbnailURL == "" {
+					event.ThumbnailURL = liveStream.ThumbnailURL
+				}
 			}
 		}
 
-		if event.BroadcasterUserID != "" && event.StreamTitle != "" {
-			liveTitleMu.Lock()
-			liveTitleByChannelID[event.BroadcasterUserID] = event.StreamTitle
-			liveTitleMu.Unlock()
+		if event.BroadcasterUserID != "" {
+			liveStreamMu.Lock()
+			liveStreamByChannelID[event.BroadcasterUserID] = twitch.LiveStream{
+				BroadcasterUserID:    event.BroadcasterUserID,
+				BroadcasterUserLogin: event.BroadcasterUserLogin,
+				BroadcasterUserName:  event.BroadcasterUserName,
+				StreamTitle:          event.StreamTitle,
+				GameName:             event.GameName,
+				ThumbnailURL:         event.ThumbnailURL,
+				StartedAt:            event.StartedAt,
+			}
+			liveStreamMu.Unlock()
 		}
 
 		log.Printf("Stream online: %s (%s) - %s", event.BroadcasterUserName, event.BroadcasterUserLogin, event.StreamTitle)
@@ -1006,14 +1061,14 @@ func runNotifier(ctx context.Context, cfg *config.Config, configPath string, sil
 	refreshLiveStatus := func() {
 		nextLive := liveStatus.Snapshot()
 
-		liveTitleMu.RLock()
-		nextLiveTitles := make(map[string]string, len(nextLive))
+		liveStreamMu.RLock()
+		nextLiveStreams := make(map[string]twitch.LiveStream, len(nextLive))
 		for channelID := range nextLive {
-			if title, ok := liveTitleByChannelID[channelID]; ok && title != "" {
-				nextLiveTitles[channelID] = title
+			if stream, ok := liveStreamByChannelID[channelID]; ok {
+				nextLiveStreams[channelID] = stream
 			}
 		}
-		liveTitleMu.RUnlock()
+		liveStreamMu.RUnlock()
 
 		if len(eventSubChannelIDs) > 0 {
 			liveStreams, err := app.HelixClient().GetLiveStreams(ctx, eventSubChannelIDs)
@@ -1022,13 +1077,11 @@ func runNotifier(ctx context.Context, cfg *config.Config, configPath string, sil
 			} else {
 				for channelID := range eventSubChannelIDSet {
 					delete(nextLive, channelID)
-					delete(nextLiveTitles, channelID)
+					delete(nextLiveStreams, channelID)
 				}
 				for channelID, liveStream := range liveStreams {
 					nextLive[channelID] = true
-					if liveStream.StreamTitle != "" {
-						nextLiveTitles[channelID] = liveStream.StreamTitle
-					}
+					nextLiveStreams[channelID] = liveStream
 				}
 			}
 		}
@@ -1036,7 +1089,7 @@ func runNotifier(ctx context.Context, cfg *config.Config, configPath string, sil
 		if poller != nil {
 			for channelID := range polledChannelIDSet {
 				delete(nextLive, channelID)
-				delete(nextLiveTitles, channelID)
+				delete(nextLiveStreams, channelID)
 			}
 
 			polledLiveIDs := poller.GetLiveChannelIDs()
@@ -1050,9 +1103,7 @@ func runNotifier(ctx context.Context, cfg *config.Config, configPath string, sil
 					log.Printf("Failed to refresh polled live stream titles: %v", err)
 				} else {
 					for channelID, liveStream := range polledLiveStreams {
-						if liveStream.StreamTitle != "" {
-							nextLiveTitles[channelID] = liveStream.StreamTitle
-						}
+						nextLiveStreams[channelID] = liveStream
 					}
 				}
 			}
@@ -1060,9 +1111,9 @@ func runNotifier(ctx context.Context, cfg *config.Config, configPath string, sil
 
 		liveStatus.Replace(nextLive)
 
-		liveTitleMu.Lock()
-		liveTitleByChannelID = nextLiveTitles
-		liveTitleMu.Unlock()
+		liveStreamMu.Lock()
+		liveStreamByChannelID = nextLiveStreams
+		liveStreamMu.Unlock()
 	}
 
 	// Track if we've done initial subscription
@@ -1223,12 +1274,12 @@ func runNotifier(ctx context.Context, cfg *config.Config, configPath string, sil
 	tray.SetStatusHandler(func() []tray.LiveChannel {
 		snapshot := liveStatus.Snapshot()
 
-		liveTitleMu.RLock()
-		titleByChannelID := make(map[string]string, len(liveTitleByChannelID))
-		for channelID, title := range liveTitleByChannelID {
-			titleByChannelID[channelID] = title
+		liveStreamMu.RLock()
+		streamByChannelID := make(map[string]twitch.LiveStream, len(liveStreamByChannelID))
+		for channelID, stream := range liveStreamByChannelID {
+			streamByChannelID[channelID] = stream
 		}
-		liveTitleMu.RUnlock()
+		liveStreamMu.RUnlock()
 
 		channels := make([]tray.LiveChannel, 0, len(snapshot))
 		for channelID := range snapshot {
@@ -1238,7 +1289,7 @@ func runNotifier(ctx context.Context, cfg *config.Config, configPath string, sil
 			}
 
 			displayName := login
-			streamTitle := strings.TrimSpace(strings.ReplaceAll(titleByChannelID[channelID], "\n", " "))
+			streamTitle := strings.TrimSpace(strings.ReplaceAll(streamByChannelID[channelID].StreamTitle, "\n", " "))
 			if streamTitle != "" {
 				displayName = fmt.Sprintf("%s: %s", login, streamTitle)
 			}
@@ -1300,12 +1351,12 @@ func runNotifier(ctx context.Context, cfg *config.Config, configPath string, sil
 		dbusService.SetStatusHandler(func() (int, []string) {
 			snapshot := liveStatus.Snapshot()
 
-			liveTitleMu.RLock()
-			titleByChannelID := make(map[string]string, len(liveTitleByChannelID))
-			for channelID, title := range liveTitleByChannelID {
-				titleByChannelID[channelID] = title
+			liveStreamMu.RLock()
+			streamByChannelID := make(map[string]twitch.LiveStream, len(liveStreamByChannelID))
+			for channelID, stream := range liveStreamByChannelID {
+				streamByChannelID[channelID] = stream
 			}
-			liveTitleMu.RUnlock()
+			liveStreamMu.RUnlock()
 
 			liveChannels := make([]string, 0, len(snapshot))
 			for channelID := range snapshot {
@@ -1314,7 +1365,7 @@ func runNotifier(ctx context.Context, cfg *config.Config, configPath string, sil
 					channelName = channelID
 				}
 
-				streamTitle := strings.TrimSpace(strings.ReplaceAll(titleByChannelID[channelID], "\n", " "))
+				streamTitle := strings.TrimSpace(strings.ReplaceAll(streamByChannelID[channelID].StreamTitle, "\n", " "))
 				if streamTitle != "" {
 					liveChannels = append(liveChannels, fmt.Sprintf("%s: %s", channelName, streamTitle))
 				} else {
@@ -1324,6 +1375,44 @@ func runNotifier(ctx context.Context, cfg *config.Config, configPath string, sil
 
 			sort.Strings(liveChannels)
 			return len(liveChannels), liveChannels
+		})
+		dbusService.SetDetailedStatusHandler(func() (int, string) {
+			snapshot := liveStatus.Snapshot()
+
+			liveStreamMu.RLock()
+			streamByChannelID := make(map[string]twitch.LiveStream, len(liveStreamByChannelID))
+			for channelID, stream := range liveStreamByChannelID {
+				streamByChannelID[channelID] = stream
+			}
+			liveStreamMu.RUnlock()
+
+			channels := make([]statusJSONChannel, 0, len(snapshot))
+			for channelID := range snapshot {
+				stream := streamByChannelID[channelID]
+				login := channelNameByID[channelID]
+				if login == "" {
+					login = stream.BroadcasterUserLogin
+				}
+				if login == "" {
+					login = channelID
+				}
+				channels = append(channels, statusJSONChannel{
+					Login:        login,
+					Title:        strings.TrimSpace(strings.ReplaceAll(stream.StreamTitle, "\n", " ")),
+					ThumbnailURL: stream.ThumbnailURL,
+					Live:         true,
+				})
+			}
+			sort.Slice(channels, func(i, j int) bool {
+				return strings.ToLower(channels[i].Login) < strings.ToLower(channels[j].Login)
+			})
+
+			encoded, err := json.Marshal(channels)
+			if err != nil {
+				log.Printf("Failed to encode detailed status: %v", err)
+				return len(channels), "[]"
+			}
+			return len(channels), string(encoded)
 		})
 	}
 

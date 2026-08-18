@@ -193,6 +193,7 @@ func (p *Poller) poll() {
 			BroadcasterUserName:  stream.BroadcasterUserName,
 			StreamTitle:          stream.StreamTitle,
 			GameName:             stream.GameName,
+			ThumbnailURL:         stream.ThumbnailURL,
 			StartedAt:            stream.StartedAt,
 		}
 
