@@ -29,6 +29,11 @@ Panel {
   readonly property var panelRows: buildPanelRows()
   readonly property var filteredActions: filterRows("action")
   readonly property var filteredChannels: filterRows("channel")
+  readonly property var filteredLiveChannels: filteredChannels.filter(function(entry) { return entry.value.live === true })
+  readonly property var filteredOfflineChannels: filteredChannels.filter(function(entry) { return entry.value.live !== true })
+  readonly property var visibleOfflineChannels: filterController.filterText || offlineExpanded ? filteredOfflineChannels : []
+  readonly property var navigationRows: filteredActions.concat(filteredLiveChannels, visibleOfflineChannels)
+  property bool offlineExpanded: false
 
   function buildPanelRows() {
     var rows = []
@@ -62,6 +67,7 @@ Panel {
   }
 
   function open() {
+    offlineExpanded = false
     filterController.reset()
     if (service) service.refresh()
     controller.show()
@@ -89,8 +95,15 @@ Panel {
   function cursorItem() {
     var entry = filterController.selectedEntry()
     if (!entry) return null
-    var rows = entry.kind === "action" ? filteredActions : filteredChannels
-    var repeater = entry.kind === "action" ? actionRepeater : channelRepeater
+    var rows = filteredActions
+    var repeater = actionRepeater
+    if (entry.kind === "channel" && entry.value.live === true) {
+      rows = filteredLiveChannels
+      repeater = liveChannelRepeater
+    } else if (entry.kind === "channel") {
+      rows = visibleOfflineChannels
+      repeater = offlineChannelRepeater
+    }
     return repeater.itemAt(rows.indexOf(entry))
   }
 
@@ -144,6 +157,7 @@ Panel {
       id: filterController
       anchors.fill: parent
       model: root.panelRows
+      navigationModel: root.navigationRows
       onRevealRequested: Qt.callLater(root.scrollCursorIntoView)
       onActivateRequested: function(entry) { root.activateEntry(entry) }
       onCloseRequested: root.close()
@@ -254,10 +268,10 @@ Panel {
           }
 
           Text {
-            visible: root.filteredChannels.length > 0
+            visible: root.filteredLiveChannels.length > 0
             text: filterController.filterText
-              ? "CHANNELS · " + root.filteredChannels.length + " MATCHING"
-              : (root.service && root.service.liveCount > 0 ? "CHANNELS · " + root.service.liveCount + " LIVE" : "CHANNELS")
+              ? "LIVE · " + root.filteredLiveChannels.length + " MATCHING"
+              : "LIVE · " + root.filteredLiveChannels.length
             color: Qt.darker(root.contentForeground, 1.4)
             font.family: root.contentFontFamily
             font.pixelSize: Style.font.caption
@@ -270,79 +284,131 @@ Panel {
             spacing: Style.space(2)
 
             Repeater {
-              id: channelRepeater
-              model: root.filteredChannels
+              id: liveChannelRepeater
+              model: root.filteredLiveChannels
+              delegate: channelDelegate
+            }
+          }
 
-              CursorSurface {
-                required property int index
-                required property var modelData
-                width: contentColumn.width
-                implicitHeight: channelColumn.implicitHeight + Style.space(12)
-                hasCursor: filterController.cursorIndex === filterController.indexForKey(modelData.key)
-                foreground: root.contentForeground
-                accent: modelData.value.live === true ? "#ac77e5" : root.contentForeground
+          Item {
+            width: parent.width
+            visible: root.filteredOfflineChannels.length > 0
+            implicitHeight: offlineHeaderRow.implicitHeight
 
-                Row {
-                  anchors.left: parent.left
-                  anchors.right: parent.right
-                  anchors.verticalCenter: parent.verticalCenter
-                  anchors.leftMargin: Style.space(8)
-                  anchors.rightMargin: Style.space(8)
-                  spacing: Style.space(10)
+            Row {
+              id: offlineHeaderRow
+              spacing: Style.space(6)
+
+              Text {
+                text: filterController.filterText || root.offlineExpanded ? "󰅀" : "󰅂"
+                color: Qt.darker(root.contentForeground, 1.4)
+                font.family: root.contentFontFamily
+                font.pixelSize: Style.font.caption
+              }
+
+              Text {
+                text: filterController.filterText
+                  ? "OFFLINE · " + root.filteredOfflineChannels.length + " MATCHING"
+                  : "OFFLINE · " + root.filteredOfflineChannels.length
+                color: Qt.darker(root.contentForeground, 1.4)
+                font.family: root.contentFontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+                font.letterSpacing: 1.2
+              }
+            }
+
+            MouseArea {
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.offlineExpanded = !root.offlineExpanded
+            }
+          }
+
+          Column {
+            width: parent.width
+            spacing: Style.space(2)
+
+            Repeater {
+              id: offlineChannelRepeater
+              model: root.visibleOfflineChannels
+              delegate: channelDelegate
+            }
+          }
+
+          Component {
+            id: channelDelegate
+
+            CursorSurface {
+              required property int index
+              required property var modelData
+              width: contentColumn.width
+              implicitHeight: channelColumn.implicitHeight + Style.space(12)
+              hasCursor: filterController.cursorIndex === filterController.indexForKey(modelData.key)
+              foreground: root.contentForeground
+              accent: modelData.value.live === true ? "#ac77e5" : root.contentForeground
+
+              Row {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.leftMargin: Style.space(8)
+                anchors.rightMargin: Style.space(8)
+                spacing: Style.space(10)
+
+                Text {
+                  width: Style.space(22)
+                  text: modelData.value.live === true ? "" : "󰖪"
+                  color: modelData.value.live === true ? "#ac77e5" : Qt.darker(root.contentForeground, 1.5)
+                  font.family: root.contentFontFamily
+                  font.pixelSize: Style.font.icon
+                  horizontalAlignment: Text.AlignHCenter
+                }
+
+                Column {
+                  id: channelColumn
+                  width: Math.max(0, parent.width - Style.space(62))
+                  spacing: Style.space(2)
 
                   Text {
-                    width: Style.space(22)
-                    text: modelData.value.live === true ? "" : "󰖪"
-                    color: modelData.value.live === true ? "#ac77e5" : Qt.darker(root.contentForeground, 1.5)
+                    width: parent.width
+                    text: String(modelData.value.login || "")
+                    color: root.contentForeground
                     font.family: root.contentFontFamily
-                    font.pixelSize: Style.font.icon
-                    horizontalAlignment: Text.AlignHCenter
-                  }
-
-                  Column {
-                    id: channelColumn
-                    width: Math.max(0, parent.width - Style.space(62))
-                    spacing: Style.space(2)
-
-                    Text {
-                      width: parent.width
-                      text: String(modelData.value.login || "")
-                      color: root.contentForeground
-                      font.family: root.contentFontFamily
-                      font.pixelSize: Style.font.body
-                      font.bold: modelData.value.live === true
-                      elide: Text.ElideRight
-                    }
-
-                    Text {
-                      width: parent.width
-                      visible: text !== ""
-                      text: modelData.value.live === true ? String(modelData.value.title || "") : "Offline · open recent broadcasts"
-                      color: Qt.darker(root.contentForeground, 1.4)
-                      font.family: root.contentFontFamily
-                      font.pixelSize: Style.font.caption
-                      elide: Text.ElideRight
-                    }
+                    font.pixelSize: Style.font.body
+                    font.bold: modelData.value.live === true
+                    elide: Text.ElideRight
                   }
 
                   Text {
-                    width: Style.space(20)
-                    visible: modelData.value.autoOpen === true
-                    text: "󰋺"
-                    color: Qt.darker(root.contentForeground, 1.3)
+                    width: parent.width
+                    visible: text !== ""
+                    text: modelData.value.live === true ? String(modelData.value.title || "") : "Offline · open recent broadcasts"
+                    color: Qt.darker(root.contentForeground, 1.4)
                     font.family: root.contentFontFamily
                     font.pixelSize: Style.font.caption
-                    horizontalAlignment: Text.AlignHCenter
+                    elide: Text.ElideRight
                   }
                 }
 
-                MouseArea {
-                  anchors.fill: parent
-                  hoverEnabled: true
-                  cursorShape: Qt.PointingHandCursor
-                  onEntered: filterController.cursorIndex = filterController.indexForKey(modelData.key)
-                  onClicked: root.activateChannel(modelData.value)
+                Text {
+                  width: Style.space(20)
+                  visible: modelData.value.autoOpen === true
+                  text: "󰋺"
+                  color: Qt.darker(root.contentForeground, 1.3)
+                  font.family: root.contentFontFamily
+                  font.pixelSize: Style.font.caption
+                  horizontalAlignment: Text.AlignHCenter
                 }
+              }
+
+              MouseArea {
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onEntered: filterController.cursorIndex = filterController.indexForKey(modelData.key)
+                onClicked: root.activateChannel(modelData.value)
               }
             }
           }
