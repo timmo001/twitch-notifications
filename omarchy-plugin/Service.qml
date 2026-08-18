@@ -10,6 +10,7 @@ Item {
   property string statusState: "inactive"
   property int liveCount: 0
   property var channels: []
+  property var followedLive: []
   property string errorText: ""
   property var actionCommand: []
 
@@ -22,6 +23,7 @@ Item {
     statusState = "inactive"
     liveCount = 0
     channels = []
+    followedLive = []
     errorText = message
   }
 
@@ -41,6 +43,10 @@ Item {
 
   function refresh() {
     if (!statusProcess.running) statusProcess.running = true
+  }
+
+  function refreshFollowedLive() {
+    if (!followedProcess.running) followedProcess.running = true
   }
 
   function runAction(command) {
@@ -99,6 +105,27 @@ Item {
     stdout: StdioCollector { waitForEnd: true }
     stderr: StdioCollector { waitForEnd: true }
     onExited: refreshDelay.restart()
+  }
+
+  Process {
+    id: followedProcess
+    command: ["twitch-notifications", "--followed-live-json"]
+    stdout: StdioCollector {
+      id: followedOutput
+      waitForEnd: true
+    }
+    onExited: function(exitCode) {
+      if (exitCode !== 0) {
+        root.followedLive = []
+        return
+      }
+      try {
+        var payload = JSON.parse(String(followedOutput.text || "").trim())
+        root.followedLive = Array.isArray(payload) ? payload : []
+      } catch (error) {
+        root.followedLive = []
+      }
+    }
   }
 
   Timer {

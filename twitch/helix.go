@@ -462,6 +462,80 @@ type LiveStream struct {
 	StartedAt            time.Time
 }
 
+// GetFollowedLiveStreams returns all live streams followed by the authenticated user.
+func (hc *HelixClient) GetFollowedLiveStreams(ctx context.Context, userID string) ([]LiveStream, error) {
+	streams := make([]LiveStream, 0)
+	after := ""
+
+	for {
+		if _, err := hc.WaitForRateLimit(ctx); err != nil {
+			return nil, err
+		}
+
+		params := url.Values{}
+		params.Set("user_id", userID)
+		params.Set("first", "100")
+		if after != "" {
+			params.Set("after", after)
+		}
+
+		req, err := http.NewRequestWithContext(ctx, "GET", "https://api.twitch.tv/helix/streams/followed?"+params.Encode(), nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create followed streams request: %w", err)
+		}
+		req.Header.Set("Client-ID", hc.clientID)
+		req.Header.Set("Authorization", "Bearer "+hc.accessToken)
+
+		resp, err := (&http.Client{Timeout: utils.HTTPClientTimeout}).Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get followed streams: %w", err)
+		}
+
+		var result struct {
+			Data []struct {
+				UserID    string `json:"user_id"`
+				UserLogin string `json:"user_login"`
+				UserName  string `json:"user_name"`
+				Title     string `json:"title"`
+				GameName  string `json:"game_name"`
+				StartedAt string `json:"started_at"`
+			} `json:"data"`
+			Pagination struct {
+				Cursor string `json:"cursor"`
+			} `json:"pagination"`
+		}
+
+		hc.parseRateLimitHeaders(resp)
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			return nil, NewAPIError(resp.StatusCode, http.StatusText(resp.StatusCode), body)
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			resp.Body.Close()
+			return nil, fmt.Errorf("failed to decode followed streams response: %w", err)
+		}
+		resp.Body.Close()
+
+		for _, stream := range result.Data {
+			startedAt, _ := time.Parse(time.RFC3339, stream.StartedAt)
+			streams = append(streams, LiveStream{
+				BroadcasterUserID:    stream.UserID,
+				BroadcasterUserLogin: stream.UserLogin,
+				BroadcasterUserName:  stream.UserName,
+				StreamTitle:          stream.Title,
+				GameName:             stream.GameName,
+				StartedAt:            startedAt,
+			})
+		}
+
+		after = result.Pagination.Cursor
+		if after == "" {
+			return streams, nil
+		}
+	}
+}
+
 // GetLiveStreams checks which of the given channel IDs are currently live
 // Returns a map of broadcaster_user_id -> LiveStream
 func (hc *HelixClient) GetLiveStreams(ctx context.Context, channelIDs []string) (map[string]LiveStream, error) {

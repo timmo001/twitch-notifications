@@ -29,11 +29,15 @@ Panel {
   readonly property var panelRows: buildPanelRows()
   readonly property var filteredActions: filterRows("action")
   readonly property var filteredChannels: filterRows("channel")
+  readonly property var filteredFollowedChannels: filterRows("followed")
   readonly property var filteredLiveChannels: filteredChannels.filter(function(entry) { return entry.value.live === true })
   readonly property var filteredOfflineChannels: filteredChannels.filter(function(entry) { return entry.value.live !== true })
   readonly property var visibleOfflineChannels: filterController.filterText || offlineExpanded ? filteredOfflineChannels : []
   readonly property var navigationRows: filteredActions.concat(filteredLiveChannels, visibleOfflineChannels)
+    .concat(visibleFollowedChannels)
+  readonly property var visibleFollowedChannels: filterController.filterText || followedExpanded ? filteredFollowedChannels : []
   property bool offlineExpanded: false
+  property bool followedExpanded: false
 
   function buildPanelRows() {
     var rows = []
@@ -59,6 +63,18 @@ Panel {
         secondaryText: channel.title
       })
     }
+    var followed = service ? service.followedLive : []
+    for (var k = 0; k < followed.length; k++) {
+      var followedChannel = followed[k]
+      rows.push({
+        key: "followed:" + String(followedChannel.login || k),
+        kind: "followed",
+        section: "followed",
+        value: followedChannel,
+        primaryText: followedChannel.login,
+        secondaryText: followedChannel.title
+      })
+    }
     return rows
   }
 
@@ -68,8 +84,12 @@ Panel {
 
   function open() {
     offlineExpanded = false
+    followedExpanded = false
     filterController.reset()
-    if (service) service.refresh()
+    if (service) {
+      service.refresh()
+      service.refreshFollowedLive()
+    }
     controller.show()
     Qt.callLater(function() {
       panelFlick.contentY = 0
@@ -103,6 +123,9 @@ Panel {
     } else if (entry.kind === "channel") {
       rows = visibleOfflineChannels
       repeater = offlineChannelRepeater
+    } else if (entry.kind === "followed") {
+      rows = visibleFollowedChannels
+      repeater = followedChannelRepeater
     }
     return repeater.itemAt(rows.indexOf(entry))
   }
@@ -140,7 +163,7 @@ Panel {
 
   function activateEntry(entry) {
     if (entry.kind === "action") activateAction(entry.actionIndex)
-    else if (entry.kind === "channel") activateChannel(entry.value)
+    else if (entry.kind === "channel" || entry.kind === "followed") activateChannel(entry.value)
   }
 
   KeyboardPanel {
@@ -333,6 +356,53 @@ Panel {
             Repeater {
               id: offlineChannelRepeater
               model: root.visibleOfflineChannels
+              delegate: channelDelegate
+            }
+          }
+
+          Item {
+            width: parent.width
+            visible: root.filteredFollowedChannels.length > 0
+            implicitHeight: followedHeaderRow.implicitHeight
+
+            Row {
+              id: followedHeaderRow
+              spacing: Style.space(6)
+
+              Text {
+                text: filterController.filterText || root.followedExpanded ? "󰅀" : "󰅂"
+                color: Qt.darker(root.contentForeground, 1.4)
+                font.family: root.contentFontFamily
+                font.pixelSize: Style.font.caption
+              }
+
+              Text {
+                text: filterController.filterText
+                  ? "FOLLOWED LIVE · " + root.filteredFollowedChannels.length + " MATCHING"
+                  : "FOLLOWED LIVE · " + root.filteredFollowedChannels.length
+                color: Qt.darker(root.contentForeground, 1.4)
+                font.family: root.contentFontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+                font.letterSpacing: 1.2
+              }
+            }
+
+            MouseArea {
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.followedExpanded = !root.followedExpanded
+            }
+          }
+
+          Column {
+            width: parent.width
+            spacing: Style.space(2)
+
+            Repeater {
+              id: followedChannelRepeater
+              model: root.visibleFollowedChannels
               delegate: channelDelegate
             }
           }

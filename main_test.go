@@ -5,10 +5,28 @@ import (
 	"testing"
 
 	"twitch-notifications/config"
+	"twitch-notifications/twitch"
 )
 
 func boolPointer(value bool) *bool {
 	return &value
+}
+
+func TestBuildFollowedLiveChannelsExcludesWatchedChannels(t *testing.T) {
+	t.Parallel()
+
+	channels := buildFollowedLiveChannels(
+		[]twitch.LiveStream{
+			{BroadcasterUserLogin: "watched", StreamTitle: "Configured"},
+			{BroadcasterUserLogin: "other", StreamTitle: "Other stream"},
+		},
+		[]config.WatchedChannel{{Name: "WATCHED"}},
+	)
+
+	want := []statusJSONChannel{{Login: "other", Title: "Other stream", Live: true}}
+	if !reflect.DeepEqual(channels, want) {
+		t.Fatalf("buildFollowedLiveChannels() = %#v, want %#v", channels, want)
+	}
 }
 
 func TestBuildStatusJSONPayload(t *testing.T) {

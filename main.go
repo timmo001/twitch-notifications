@@ -146,6 +146,26 @@ func buildStatusJSONPayload(active bool, liveCount int, liveChannels []string, w
 	}
 }
 
+func buildFollowedLiveChannels(streams []twitch.LiveStream, watchedChannels []config.WatchedChannel) []statusJSONChannel {
+	watched := make(map[string]struct{}, len(watchedChannels))
+	for _, channel := range watchedChannels {
+		watched[strings.ToLower(strings.TrimSpace(channel.Name))] = struct{}{}
+	}
+
+	channels := make([]statusJSONChannel, 0, len(streams))
+	for _, stream := range streams {
+		if _, configured := watched[strings.ToLower(stream.BroadcasterUserLogin)]; configured {
+			continue
+		}
+		channels = append(channels, statusJSONChannel{
+			Login: stream.BroadcasterUserLogin,
+			Title: stream.StreamTitle,
+			Live:  true,
+		})
+	}
+	return channels
+}
+
 func truncateTooltipLine(value string, maxRunes int) string {
 	if maxRunes <= 0 {
 		return value
@@ -385,10 +405,45 @@ func main() {
 	status := flag.Bool("status", false, "Print whether the application is active (active|inactive) and exit")
 	statusBarJSON := flag.Bool("status-bar-json", false, "Print status bar JSON status and exit")
 	statusJSON := flag.Bool("status-json", false, "Print structured daemon and channel status as JSON and exit")
+	followedLiveJSON := flag.Bool("followed-live-json", false, "Print unconfigured followed channels that are live as JSON and exit")
 	maxChars := flag.Int("max-chars", 0, "Maximum characters per live channel line in --status-bar-json tooltip")
 	startupDelay := flag.Bool("delay", false, "Delay startup to allow the previous instance to fully shut down (used during periodic restart)")
 	silent := flag.Bool("silent", false, "Suppress startup and initial monitoring notifications (used during periodic restart)")
 	flag.Parse()
+	if *followedLiveJSON {
+		cfg, err := config.Load(*configPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to load configuration: %v\n", err)
+			os.Exit(1)
+		}
+
+		tokenManager := setupTokenManager(cfg, *configPath)
+		accessToken, err := tokenManager.GetAccessToken(context.Background())
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to get access token: %v\n", err)
+			os.Exit(1)
+		}
+		helixClient, err := twitch.NewHelixClient(cfg.Twitch.ClientID, accessToken)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to create Twitch client: %v\n", err)
+			os.Exit(1)
+		}
+		userID, err := helixClient.GetUserID(context.Background())
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to get Twitch user: %v\n", err)
+			os.Exit(1)
+		}
+		streams, err := helixClient.GetFollowedLiveStreams(context.Background(), userID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to get followed live streams: %v\n", err)
+			os.Exit(1)
+		}
+		if err := json.NewEncoder(os.Stdout).Encode(buildFollowedLiveChannels(streams, cfg.WatchedChannels)); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to encode followed live streams: %v\n", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
 
 	// Handle status checks: query DBus service and exit.
 	if *status || *statusBarJSON || *statusJSON {
