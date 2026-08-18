@@ -33,9 +33,8 @@ Panel {
   readonly property var filteredLiveChannels: filteredChannels.filter(function(entry) { return entry.value.live === true })
   readonly property var filteredOfflineChannels: filteredChannels.filter(function(entry) { return entry.value.live !== true })
   readonly property var visibleOfflineChannels: filterController.filterText || offlineExpanded ? filteredOfflineChannels : []
-  readonly property var navigationRows: filteredActions.concat(filteredLiveChannels, visibleOfflineChannels)
-    .concat(visibleFollowedChannels)
   readonly property var visibleFollowedChannels: filterController.filterText || followedExpanded ? filteredFollowedChannels : []
+  readonly property var navigationRows: buildNavigationRows()
   property bool offlineExpanded: false
   property bool followedExpanded: false
 
@@ -82,6 +81,16 @@ Panel {
     return filterController.filteredModel.filter(function(entry) { return entry.kind === kind })
   }
 
+  function buildNavigationRows() {
+    var rows = filteredActions.concat(filteredLiveChannels)
+    if (!filterController.filterText && filteredFollowedChannels.length > 0)
+      rows.push({ key: "toggle:followed", kind: "toggle-followed" })
+    rows = rows.concat(visibleFollowedChannels)
+    if (!filterController.filterText && filteredOfflineChannels.length > 0)
+      rows.push({ key: "toggle:offline", kind: "toggle-offline" })
+    return rows.concat(visibleOfflineChannels)
+  }
+
   function open() {
     offlineExpanded = false
     followedExpanded = false
@@ -126,7 +135,8 @@ Panel {
     } else if (entry.kind === "followed") {
       rows = visibleFollowedChannels
       repeater = followedChannelRepeater
-    }
+    } else if (entry.kind === "toggle-offline") return offlineHeader
+    else if (entry.kind === "toggle-followed") return followedHeader
     return repeater.itemAt(rows.indexOf(entry))
   }
 
@@ -164,6 +174,8 @@ Panel {
   function activateEntry(entry) {
     if (entry.kind === "action") activateAction(entry.actionIndex)
     else if (entry.kind === "channel" || entry.kind === "followed") activateChannel(entry.value)
+    else if (entry.kind === "toggle-offline") offlineExpanded = !offlineExpanded
+    else if (entry.kind === "toggle-followed") followedExpanded = !followedExpanded
   }
 
   KeyboardPanel {
@@ -313,13 +325,76 @@ Panel {
             }
           }
 
-          Item {
+          CursorSurface {
+            id: followedHeader
+            width: parent.width
+            visible: root.filteredFollowedChannels.length > 0
+            implicitHeight: followedHeaderRow.implicitHeight + Style.space(8)
+            hasCursor: filterController.cursorIndex === filterController.indexForKey("toggle:followed")
+            foreground: root.contentForeground
+            accent: root.contentForeground
+
+            Row {
+              id: followedHeaderRow
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+              anchors.leftMargin: Style.space(8)
+              spacing: Style.space(6)
+
+              Text {
+                text: filterController.filterText || root.followedExpanded ? "󰅀" : "󰅂"
+                color: Qt.darker(root.contentForeground, 1.4)
+                font.family: root.contentFontFamily
+                font.pixelSize: Style.font.caption
+              }
+
+              Text {
+                text: filterController.filterText
+                  ? "OTHER LIVE · " + root.filteredFollowedChannels.length + " MATCHING"
+                  : "OTHER LIVE · " + root.filteredFollowedChannels.length
+                color: Qt.darker(root.contentForeground, 1.4)
+                font.family: root.contentFontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+                font.letterSpacing: 1.2
+              }
+            }
+
+            MouseArea {
+              anchors.fill: parent
+              enabled: !filterController.filterText
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onEntered: filterController.cursorIndex = filterController.indexForKey("toggle:followed")
+              onClicked: root.activateEntry({ kind: "toggle-followed" })
+            }
+          }
+
+          Column {
+            width: parent.width
+            spacing: Style.space(2)
+
+            Repeater {
+              id: followedChannelRepeater
+              model: root.visibleFollowedChannels
+              delegate: channelDelegate
+            }
+          }
+
+          CursorSurface {
+            id: offlineHeader
             width: parent.width
             visible: root.filteredOfflineChannels.length > 0
-            implicitHeight: offlineHeaderRow.implicitHeight
+            implicitHeight: offlineHeaderRow.implicitHeight + Style.space(8)
+            hasCursor: filterController.cursorIndex === filterController.indexForKey("toggle:offline")
+            foreground: root.contentForeground
+            accent: root.contentForeground
 
             Row {
               id: offlineHeaderRow
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+              anchors.leftMargin: Style.space(8)
               spacing: Style.space(6)
 
               Text {
@@ -343,9 +418,11 @@ Panel {
 
             MouseArea {
               anchors.fill: parent
+              enabled: !filterController.filterText
               hoverEnabled: true
               cursorShape: Qt.PointingHandCursor
-              onClicked: root.offlineExpanded = !root.offlineExpanded
+              onEntered: filterController.cursorIndex = filterController.indexForKey("toggle:offline")
+              onClicked: root.activateEntry({ kind: "toggle-offline" })
             }
           }
 
@@ -356,53 +433,6 @@ Panel {
             Repeater {
               id: offlineChannelRepeater
               model: root.visibleOfflineChannels
-              delegate: channelDelegate
-            }
-          }
-
-          Item {
-            width: parent.width
-            visible: root.filteredFollowedChannels.length > 0
-            implicitHeight: followedHeaderRow.implicitHeight
-
-            Row {
-              id: followedHeaderRow
-              spacing: Style.space(6)
-
-              Text {
-                text: filterController.filterText || root.followedExpanded ? "󰅀" : "󰅂"
-                color: Qt.darker(root.contentForeground, 1.4)
-                font.family: root.contentFontFamily
-                font.pixelSize: Style.font.caption
-              }
-
-              Text {
-                text: filterController.filterText
-                  ? "FOLLOWED LIVE · " + root.filteredFollowedChannels.length + " MATCHING"
-                  : "FOLLOWED LIVE · " + root.filteredFollowedChannels.length
-                color: Qt.darker(root.contentForeground, 1.4)
-                font.family: root.contentFontFamily
-                font.pixelSize: Style.font.caption
-                font.bold: true
-                font.letterSpacing: 1.2
-              }
-            }
-
-            MouseArea {
-              anchors.fill: parent
-              hoverEnabled: true
-              cursorShape: Qt.PointingHandCursor
-              onClicked: root.followedExpanded = !root.followedExpanded
-            }
-          }
-
-          Column {
-            width: parent.width
-            spacing: Style.space(2)
-
-            Repeater {
-              id: followedChannelRepeater
-              model: root.visibleFollowedChannels
               delegate: channelDelegate
             }
           }
