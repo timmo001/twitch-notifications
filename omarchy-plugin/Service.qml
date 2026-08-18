@@ -13,6 +13,7 @@ Item {
   property var followedLive: []
   property string errorText: ""
   property var actionCommand: []
+  property string commandPath: "twitch-notifications"
 
   readonly property bool refreshing: statusProcess.running
   readonly property var liveChannels: channels.filter(function(channel) { return channel.live === true })
@@ -57,7 +58,7 @@ Item {
 
   function recheck(openStreams) {
     runAction(openStreams
-      ? ["twitch-notifications", "--recheck", "--open"]
+      ? [commandPath, "--recheck", "--open"]
       : ["twitch-notifications-recheck"])
   }
 
@@ -88,7 +89,7 @@ Item {
 
   Process {
     id: statusProcess
-    command: ["twitch-notifications", "--status-json"]
+    command: [root.commandPath, "--status-json"]
     stdout: StdioCollector {
       id: statusOutput
       waitForEnd: true
@@ -109,7 +110,7 @@ Item {
 
   Process {
     id: followedProcess
-    command: ["twitch-notifications", "--followed-live-json"]
+    command: [root.commandPath, "--followed-live-json"]
     stdout: StdioCollector {
       id: followedOutput
       waitForEnd: true

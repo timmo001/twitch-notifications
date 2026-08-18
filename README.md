@@ -58,6 +58,17 @@ mise run serve:stop
 The development wrapper temporarily stops the packaged daemon and restores it
 when the development daemon stops.
 
+To test the development daemon and Omarchy panel together:
+
+```bash
+mise run dev:start
+mise run dev:stop
+```
+
+The combined task opens the panel and publishes `omarchy-plugin/` to the
+installed plugin for the development session. Stopping it restores the
+installed plugin and packaged daemon.
+
 ## Configuration
 
 1. Create a Twitch Developer Application:

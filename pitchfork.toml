@@ -3,3 +3,7 @@
 [daemons.backend]
 run = ".scripts/linux/pitchfork-backend-dev.sh"
 ready_delay = 3
+
+[daemons.panel]
+run = ".scripts/linux/pitchfork-panel-dev.sh"
+ready_delay = 1

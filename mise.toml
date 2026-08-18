@@ -55,6 +55,26 @@ run = "pitchfork restart backend"
 description = "Stop the development server and restore the packaged daemon"
 run = "pitchfork stop backend"
 
+[tasks."dev:start"]
+description = "Start the development daemon and panel, then open the panel"
+run = "pitchfork start --force backend panel && omarchy restart shell && omarchy-shell timmo.twitch open"
+
+[tasks."dev:status"]
+description = "Show development daemon and panel status"
+run = "pitchfork status backend && pitchfork status panel"
+
+[tasks."dev:logs"]
+description = "Follow development daemon and panel logs"
+run = "pitchfork logs -t backend panel"
+
+[tasks."dev:restart"]
+description = "Restart the development daemon and panel, then open the panel"
+run = "pitchfork restart backend panel && omarchy restart shell && omarchy-shell timmo.twitch open"
+
+[tasks."dev:stop"]
+description = "Stop development and restore the packaged daemon and installed panel"
+run = "pitchfork stop panel backend && omarchy restart shell"
+
 [tasks."run:tui"]
 description = "Build and run the TUI"
 depends = ["build:tui"]

@@ -28,6 +28,9 @@ Instructions for coding agents working in this repository.
   development daemon stops.
 - Use `mise run serve:status`, `mise run serve:logs`, `mise run serve:restart`,
   and `mise run serve:stop` to manage it.
+- Run `mise run dev:start` to test the development daemon and local panel
+  together. Use the matching `dev:status`, `dev:logs`, `dev:restart`, and
+  `dev:stop` tasks so the installed panel and packaged daemon are restored.
 
 ## Publish Workflow
 
