@@ -500,7 +500,7 @@ Panel {
 
                 Column {
                   id: channelColumn
-                  width: Math.max(0, parent.width - Style.space(modelData.value.live === true ? 224 : 74))
+                  width: Math.max(0, parent.width - Style.space(modelData.value.live === true ? 254 : 104))
                   spacing: Style.space(2)
 
                   Text {
@@ -538,6 +538,16 @@ Panel {
                     elide: Text.ElideRight
                     verticalAlignment: Text.AlignVCenter
                   }
+                }
+
+                Text {
+                  width: Style.space(20)
+                  visible: modelData.value.autoOpen === true
+                  text: ""
+                  color: Qt.darker(root.contentForeground, 1.3)
+                  font.family: root.contentFontFamily
+                  font.pixelSize: Style.font.caption
+                  horizontalAlignment: Text.AlignHCenter
                 }
 
               }
