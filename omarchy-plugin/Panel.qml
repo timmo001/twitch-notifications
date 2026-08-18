@@ -461,9 +461,17 @@ Panel {
                 spacing: Style.space(10)
 
                 Item {
-                  width: channelSurface.hasThumbnail ? Style.space(64) : Style.space(22)
-                  height: channelSurface.hasThumbnail ? Math.round(width * 9 / 16) : channelIcon.implicitHeight
+                  width: Style.space(64)
+                  height: Math.round(width * 9 / 16)
                   clip: true
+
+                  Rectangle {
+                    anchors.fill: parent
+                    color: modelData.value.live === true
+                      ? Qt.darker(root.contentForeground, 2.2)
+                      : Qt.darker(root.contentForeground, 2.5)
+                    radius: Style.space(4)
+                  }
 
                   Image {
                     id: channelThumbnail
@@ -490,7 +498,7 @@ Panel {
 
                 Column {
                   id: channelColumn
-                  width: Math.max(0, parent.width - Style.space(channelSurface.hasThumbnail ? 104 : 62))
+                  width: Math.max(0, parent.width - Style.space(104))
                   spacing: Style.space(2)
 
                   Text {
