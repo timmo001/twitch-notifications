@@ -47,7 +47,7 @@ The plugin exposes the `timmo.twitch` shell IPC target with `refresh`,
 `recheck`, `restart`, `open`, `close`, `show`, `hide`, and `toggle` methods:
 
 ```bash
-omarchy-shell timmo.twitch toggle
+omarchy-shell shell toggle timmo.twitch
 ```
 
 ## Settings
