@@ -151,6 +151,12 @@ Panel {
       panelFlick.contentY = point.y + item.height - panelFlick.height
   }
 
+  Timer {
+    id: revealTimer
+    interval: 0
+    onTriggered: root.scrollCursorIntoView()
+  }
+
   function activateAction(index) {
     if (!service) return
     if (index === 0) service.recheck(false)
@@ -195,7 +201,7 @@ Panel {
       anchors.fill: parent
       model: root.panelRows
       navigationModel: root.navigationRows
-      onRevealRequested: Qt.callLater(root.scrollCursorIntoView)
+      onRevealRequested: revealTimer.restart()
       onActivateRequested: function(entry) { root.activateEntry(entry) }
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
