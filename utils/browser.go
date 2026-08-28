@@ -19,18 +19,30 @@ func NewOpener() *Opener {
 // OpenURL opens a URL in the default browser in the background
 func (o *Opener) OpenURL(url string) error {
 	var cmd *exec.Cmd
-	var err error
 
 	switch runtime.GOOS {
 	case "darwin":
 		cmd = exec.Command("open", url)
-		err = cmd.Start()
 	default: // Linux and others
 		cmd = openCommand(url)
-		err = cmd.Start()
 	}
 
-	if err != nil {
+	return o.openURL(url, cmd)
+}
+
+// OpenAppURL opens a URL in a standalone browser window when supported.
+func (o *Opener) OpenAppURL(url string) error {
+	if runtime.GOOS != "darwin" {
+		if _, err := exec.LookPath("omarchy-launch-webapp"); err == nil {
+			return o.openURL(url, exec.Command("omarchy-launch-webapp", url))
+		}
+	}
+
+	return o.OpenURL(url)
+}
+
+func (o *Opener) openURL(url string, cmd *exec.Cmd) error {
+	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to open URL: %w", err)
 	}
 

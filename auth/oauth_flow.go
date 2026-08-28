@@ -136,7 +136,7 @@ func (of *OAuthFlow) Run(ctx context.Context, isAutomatic bool) (*TokenManager, 
 	}
 
 	opener := utils.NewOpener()
-	if err := opener.OpenURL(authURL); err != nil {
+	if err := opener.OpenAppURL(authURL); err != nil {
 		fmt.Printf("Warning: Failed to open browser automatically: %v\n", err)
 		fmt.Printf("Please open this URL in your browser:\n%s\n", authURL)
 	}
