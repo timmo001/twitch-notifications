@@ -16,6 +16,9 @@ Item {
   property string commandPath: "twitch-notifications"
 
   readonly property bool refreshing: statusProcess.running
+  readonly property bool restarting: restartFeedback.running
+  readonly property bool actionBusy: actionProcess.running || restarting
+  readonly property bool canRecheck: active && !actionBusy
   readonly property var liveChannels: channels.filter(function(channel) { return channel.live === true })
   readonly property var offlineChannels: channels.filter(function(channel) { return channel.live !== true })
 
@@ -57,12 +60,15 @@ Item {
   }
 
   function recheck(openStreams) {
+    if (!canRecheck) return
     runAction(openStreams
       ? [commandPath, "--recheck", "--open"]
       : ["twitch-notifications-recheck"])
   }
 
   function restart() {
+    if (actionBusy) return
+    restartFeedback.restart()
     runAction(["twitch-notifications-restart"])
   }
 
@@ -130,10 +136,17 @@ Item {
   }
 
   Timer {
-    interval: 5000
+    interval: root.restarting ? 250 : 5000
     running: true
     repeat: true
     triggeredOnStart: true
+    onTriggered: root.refresh()
+  }
+
+  Timer {
+    id: restartFeedback
+    interval: 5000
+    repeat: false
     onTriggered: root.refresh()
   }
 

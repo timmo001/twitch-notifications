@@ -25,16 +25,19 @@ Panel {
     "Open following live",
     "Restart notifications"
   ]
-  readonly property var actionIcons: ["", "󰕃", "", "", "󰜉"]
+  readonly property var actionIcons: ["󰑐", "󰕃", "", "", "󰜉"]
   readonly property var panelRows: buildPanelRows()
+  readonly property var filteredHeaderActions: filterRows("header-action")
   readonly property var filteredActions: filterRows("action")
   readonly property var filteredChannels: filterRows("channel")
   readonly property var filteredFollowedChannels: filterRows("followed")
   readonly property var filteredLiveChannels: filteredChannels.filter(function(entry) { return entry.value.live === true })
   readonly property var filteredOfflineChannels: filteredChannels.filter(function(entry) { return entry.value.live !== true })
+  readonly property var visibleLiveChannels: filterController.filterText || liveExpanded ? filteredLiveChannels : []
   readonly property var visibleOfflineChannels: filterController.filterText || offlineExpanded ? filteredOfflineChannels : []
   readonly property var visibleFollowedChannels: filterController.filterText || followedExpanded ? filteredFollowedChannels : []
   readonly property var navigationRows: buildNavigationRows()
+  property bool liveExpanded: true
   property bool offlineExpanded: false
   property bool followedExpanded: false
 
@@ -43,7 +46,7 @@ Panel {
     for (var i = 0; i < actionCount; i++) {
       rows.push({
         key: "action:" + i,
-        kind: "action",
+        kind: i === 0 || i === 4 ? "header-action" : "action",
         section: "action",
         actionIndex: i,
         primaryText: actionLabels[i],
@@ -84,7 +87,10 @@ Panel {
   }
 
   function buildNavigationRows() {
-    var rows = filteredActions.concat(filteredLiveChannels)
+    var rows = filteredHeaderActions.concat(filteredActions)
+    if (!filterController.filterText && filteredLiveChannels.length > 0)
+      rows.push({ key: "toggle:live", kind: "toggle-live" })
+    rows = rows.concat(visibleLiveChannels)
     if (!filterController.filterText && filteredFollowedChannels.length > 0)
       rows.push({ key: "toggle:followed", kind: "toggle-followed" })
     rows = rows.concat(visibleFollowedChannels)
@@ -94,6 +100,7 @@ Panel {
   }
 
   function open() {
+    liveExpanded = true
     offlineExpanded = false
     followedExpanded = false
     filterController.reset()
@@ -126,10 +133,11 @@ Panel {
   function cursorItem() {
     var entry = filterController.selectedEntry()
     if (!entry) return null
+    if (entry.kind === "header-action") return actionsHeader
     var rows = filteredActions
     var repeater = actionRepeater
     if (entry.kind === "channel" && entry.value.live === true) {
-      rows = filteredLiveChannels
+      rows = visibleLiveChannels
       repeater = liveChannelRepeater
     } else if (entry.kind === "channel") {
       rows = visibleOfflineChannels
@@ -137,7 +145,8 @@ Panel {
     } else if (entry.kind === "followed") {
       rows = visibleFollowedChannels
       repeater = followedChannelRepeater
-    } else if (entry.kind === "toggle-offline") return offlineHeader
+    } else if (entry.kind === "toggle-live") return liveHeader
+    else if (entry.kind === "toggle-offline") return offlineHeader
     else if (entry.kind === "toggle-followed") return followedHeader
     return repeater.itemAt(rows.indexOf(entry))
   }
@@ -159,6 +168,7 @@ Panel {
 
   function activateAction(index) {
     if (!service) return
+    if ((index === 0 || index === 1) && !service.canRecheck) return
     if (index === 0) service.recheck(false)
     else if (index === 1) {
       service.recheck(true)
@@ -180,8 +190,9 @@ Panel {
   }
 
   function activateEntry(entry) {
-    if (entry.kind === "action") activateAction(entry.actionIndex)
+    if (entry.kind === "action" || entry.kind === "header-action") activateAction(entry.actionIndex)
     else if (entry.kind === "channel" || entry.kind === "followed") activateChannel(entry.value)
+    else if (entry.kind === "toggle-live") liveExpanded = !liveExpanded
     else if (entry.kind === "toggle-offline") offlineExpanded = !offlineExpanded
     else if (entry.kind === "toggle-followed") followedExpanded = !followedExpanded
   }
@@ -226,12 +237,14 @@ Panel {
           PanelHero {
             width: parent.width
             title: "Twitch"
-            meta: !root.service || root.service.statusState === "inactive"
-              ? "Notifications unavailable"
-              : (root.service.statusState === "live"
-                ? root.service.liveCount + " live now"
-                : "No channels live")
-            detail: root.service && root.service.active ? "ACTIVE" : "OFFLINE"
+            meta: root.service && root.service.restarting ? "Restarting notifications"
+              : (!root.service || root.service.statusState === "inactive"
+                ? "Notifications unavailable"
+                : (root.service.statusState === "live"
+                  ? root.service.liveCount + " live now"
+                  : "No channels live"))
+            detail: root.service && root.service.restarting ? "RESTARTING"
+              : (root.service && root.service.active ? "ACTIVE" : "OFFLINE")
             foreground: root.contentForeground
             fontFamily: root.contentFontFamily
             iconOpacity: root.service && root.service.active ? 1 : 0.5
@@ -245,13 +258,39 @@ Panel {
             }
           }
 
-          Text {
-            text: filterController.filterText || "ACTIONS"
-            color: Qt.darker(root.contentForeground, 1.4)
-            font.family: root.contentFontFamily
-            font.pixelSize: Style.font.caption
-            font.bold: true
-            font.letterSpacing: 1.2
+          SectionHeading {
+            id: actionsHeader
+            visible: root.filteredHeaderActions.length > 0 || root.filteredActions.length > 0
+            title: filterController.filterText || "Actions"
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+            trailingControl: Component {
+              Row {
+                spacing: Style.space(4)
+
+                Repeater {
+                  model: root.filteredHeaderActions
+
+                  PanelActionButton {
+                    required property var modelData
+                    enabled: root.service && (modelData.actionIndex === 4
+                      ? !root.service.actionBusy : root.service.canRecheck)
+                    iconText: root.actionIcons[modelData.actionIndex]
+                    tooltipText: modelData.actionIndex === 4 && root.service && root.service.restarting
+                      ? "Restarting notifications" : modelData.primaryText
+                    foreground: modelData.actionIndex === 4
+                      ? (root.bar ? root.bar.urgent : Color.urgent)
+                      : Qt.darker(root.contentForeground, 1.15)
+                    fontFamily: root.contentFontFamily
+                    hasCursor: filterController.cursorIndex === filterController.indexForKey(modelData.key)
+                    onHovered: function(hovered) {
+                      if (hovered) filterController.cursorIndex = filterController.indexForKey(modelData.key)
+                    }
+                    onClicked: root.activateAction(modelData.actionIndex)
+                  }
+                }
+              }
+            }
           }
 
           Column {
@@ -269,7 +308,7 @@ Panel {
                 implicitHeight: actionRow.implicitHeight + Style.space(12)
                 hasCursor: filterController.cursorIndex === filterController.indexForKey(modelData.key)
                 foreground: root.contentForeground
-                accent: modelData.actionIndex === 4 && root.bar ? root.bar.urgent : root.contentForeground
+                accent: root.contentForeground
 
                 Row {
                   id: actionRow
@@ -283,7 +322,7 @@ Panel {
                   Text {
                     width: Style.space(22)
                     text: root.actionIcons[modelData.actionIndex]
-                    color: modelData.actionIndex === 4 && root.bar ? root.bar.urgent : root.contentForeground
+                    color: root.contentForeground
                     font.family: root.contentFontFamily
                     font.pixelSize: Style.font.icon
                     horizontalAlignment: Text.AlignHCenter
@@ -310,16 +349,24 @@ Panel {
             }
           }
 
-          Text {
+          SectionHeading {
+            id: liveHeader
             visible: root.filteredLiveChannels.length > 0
-            text: filterController.filterText
-              ? "LIVE · " + root.filteredLiveChannels.length + " MATCHING"
-              : "LIVE · " + root.filteredLiveChannels.length
-            color: Qt.darker(root.contentForeground, 1.4)
-            font.family: root.contentFontFamily
-            font.pixelSize: Style.font.caption
-            font.bold: true
-            font.letterSpacing: 1.2
+            hasCursor: filterController.cursorIndex === filterController.indexForKey("toggle:live")
+            title: (filterController.filterText || root.liveExpanded ? "󰅀 " : "󰅂 ")
+              + "LIVE · " + root.filteredLiveChannels.length
+              + (filterController.filterText ? " MATCHING" : "")
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+
+            MouseArea {
+              anchors.fill: parent
+              enabled: !filterController.filterText
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onEntered: filterController.cursorIndex = filterController.indexForKey("toggle:live")
+              onClicked: root.activateEntry({ kind: "toggle-live" })
+            }
           }
 
           Column {
@@ -328,45 +375,20 @@ Panel {
 
             Repeater {
               id: liveChannelRepeater
-              model: root.filteredLiveChannels
+              model: root.visibleLiveChannels
               delegate: channelDelegate
             }
           }
 
-          CursorSurface {
+          SectionHeading {
             id: followedHeader
-            width: parent.width
             visible: root.filteredFollowedChannels.length > 0
-            implicitHeight: followedHeaderRow.implicitHeight + Style.space(8)
             hasCursor: filterController.cursorIndex === filterController.indexForKey("toggle:followed")
             foreground: root.contentForeground
-            accent: root.contentForeground
-
-            Row {
-              id: followedHeaderRow
-              anchors.left: parent.left
-              anchors.verticalCenter: parent.verticalCenter
-              anchors.leftMargin: Style.space(8)
-              spacing: Style.space(6)
-
-              Text {
-                text: filterController.filterText || root.followedExpanded ? "󰅀" : "󰅂"
-                color: Qt.darker(root.contentForeground, 1.4)
-                font.family: root.contentFontFamily
-                font.pixelSize: Style.font.caption
-              }
-
-              Text {
-                text: filterController.filterText
-                  ? "OTHER LIVE · " + root.filteredFollowedChannels.length + " MATCHING"
-                  : "OTHER LIVE · " + root.filteredFollowedChannels.length
-                color: Qt.darker(root.contentForeground, 1.4)
-                font.family: root.contentFontFamily
-                font.pixelSize: Style.font.caption
-                font.bold: true
-                font.letterSpacing: 1.2
-              }
-            }
+            fontFamily: root.contentFontFamily
+            title: (filterController.filterText || root.followedExpanded ? "󰅀 " : "󰅂 ")
+              + "OTHER LIVE · " + root.filteredFollowedChannels.length
+              + (filterController.filterText ? " MATCHING" : "")
 
             MouseArea {
               anchors.fill: parent
@@ -389,40 +411,15 @@ Panel {
             }
           }
 
-          CursorSurface {
+          SectionHeading {
             id: offlineHeader
-            width: parent.width
             visible: root.filteredOfflineChannels.length > 0
-            implicitHeight: offlineHeaderRow.implicitHeight + Style.space(8)
             hasCursor: filterController.cursorIndex === filterController.indexForKey("toggle:offline")
             foreground: root.contentForeground
-            accent: root.contentForeground
-
-            Row {
-              id: offlineHeaderRow
-              anchors.left: parent.left
-              anchors.verticalCenter: parent.verticalCenter
-              anchors.leftMargin: Style.space(8)
-              spacing: Style.space(6)
-
-              Text {
-                text: filterController.filterText || root.offlineExpanded ? "󰅀" : "󰅂"
-                color: Qt.darker(root.contentForeground, 1.4)
-                font.family: root.contentFontFamily
-                font.pixelSize: Style.font.caption
-              }
-
-              Text {
-                text: filterController.filterText
-                  ? "OFFLINE · " + root.filteredOfflineChannels.length + " MATCHING"
-                  : "OFFLINE · " + root.filteredOfflineChannels.length
-                color: Qt.darker(root.contentForeground, 1.4)
-                font.family: root.contentFontFamily
-                font.pixelSize: Style.font.caption
-                font.bold: true
-                font.letterSpacing: 1.2
-              }
-            }
+            fontFamily: root.contentFontFamily
+            title: (filterController.filterText || root.offlineExpanded ? "󰅀 " : "󰅂 ")
+              + "OFFLINE · " + root.filteredOfflineChannels.length
+              + (filterController.filterText ? " MATCHING" : "")
 
             MouseArea {
               anchors.fill: parent
