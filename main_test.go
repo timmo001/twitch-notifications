@@ -12,7 +12,7 @@ func boolPointer(value bool) *bool {
 	return &value
 }
 
-func TestBuildFollowedLiveChannelsExcludesWatchedChannels(t *testing.T) {
+func TestBuildFollowedLiveChannelsIncludesWatchedChannels(t *testing.T) {
 	t.Parallel()
 
 	channels := buildFollowedLiveChannels(
@@ -20,10 +20,12 @@ func TestBuildFollowedLiveChannelsExcludesWatchedChannels(t *testing.T) {
 			{BroadcasterUserLogin: "watched", StreamTitle: "Configured"},
 			{BroadcasterUserLogin: "other", StreamTitle: "Other stream", GameName: "Other game", ThumbnailURL: "https://example.com/other.jpg"},
 		},
-		[]config.WatchedChannel{{Name: "WATCHED"}},
 	)
 
-	want := []statusJSONChannel{{Login: "other", Title: "Other stream", GameName: "Other game", ThumbnailURL: "https://example.com/other.jpg", Live: true}}
+	want := []statusJSONChannel{
+		{Login: "watched", Title: "Configured", Live: true},
+		{Login: "other", Title: "Other stream", GameName: "Other game", ThumbnailURL: "https://example.com/other.jpg", Live: true},
+	}
 	if !reflect.DeepEqual(channels, want) {
 		t.Fatalf("buildFollowedLiveChannels() = %#v, want %#v", channels, want)
 	}

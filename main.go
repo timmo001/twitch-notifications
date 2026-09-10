@@ -144,17 +144,9 @@ func buildStatusJSONPayload(active bool, liveCount int, liveChannels []statusJSO
 	}
 }
 
-func buildFollowedLiveChannels(streams []twitch.LiveStream, watchedChannels []config.WatchedChannel) []statusJSONChannel {
-	watched := make(map[string]struct{}, len(watchedChannels))
-	for _, channel := range watchedChannels {
-		watched[strings.ToLower(strings.TrimSpace(channel.Name))] = struct{}{}
-	}
-
+func buildFollowedLiveChannels(streams []twitch.LiveStream) []statusJSONChannel {
 	channels := make([]statusJSONChannel, 0, len(streams))
 	for _, stream := range streams {
-		if _, configured := watched[strings.ToLower(stream.BroadcasterUserLogin)]; configured {
-			continue
-		}
 		channels = append(channels, statusJSONChannel{
 			Login:        stream.BroadcasterUserLogin,
 			Title:        stream.StreamTitle,
@@ -449,7 +441,7 @@ func main() {
 	status := flag.Bool("status", false, "Print whether the application is active (active|inactive) and exit")
 	statusBarJSON := flag.Bool("status-bar-json", false, "Print status bar JSON status and exit")
 	statusJSON := flag.Bool("status-json", false, "Print structured daemon and channel status as JSON and exit")
-	followedLiveJSON := flag.Bool("followed-live-json", false, "Print unconfigured followed channels that are live as JSON and exit")
+	followedLiveJSON := flag.Bool("followed-live-json", false, "Print all followed channels that are live as JSON and exit")
 	maxChars := flag.Int("max-chars", 0, "Maximum characters per live channel line in --status-bar-json tooltip")
 	startupDelay := flag.Bool("delay", false, "Delay startup to allow the previous instance to fully shut down (used during periodic restart)")
 	silent := flag.Bool("silent", false, "Suppress startup and initial monitoring notifications (used during periodic restart)")
@@ -482,7 +474,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Failed to get followed live streams: %v\n", err)
 			os.Exit(1)
 		}
-		if err := json.NewEncoder(os.Stdout).Encode(buildFollowedLiveChannels(streams, cfg.WatchedChannels)); err != nil {
+		if err := json.NewEncoder(os.Stdout).Encode(buildFollowedLiveChannels(streams)); err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to encode followed live streams: %v\n", err)
 			os.Exit(1)
 		}

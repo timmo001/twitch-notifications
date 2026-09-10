@@ -53,7 +53,8 @@ Panel {
         secondaryText: ""
       })
     }
-    var channels = service ? service.channels : []
+    var channels = service && service.active ? service.channels : []
+    var configuredLogins = channels.map(function(channel) { return String(channel.login).trim().toLowerCase() })
     for (var j = 0; j < channels.length; j++) {
       var channel = channels[j]
       rows.push({
@@ -69,6 +70,7 @@ Panel {
     var followed = service ? service.followedLive : []
     for (var k = 0; k < followed.length; k++) {
       var followedChannel = followed[k]
+      if (configuredLogins.indexOf(String(followedChannel.login).trim().toLowerCase()) >= 0) continue
       rows.push({
         key: "followed:" + String(followedChannel.login || k),
         kind: "followed",
