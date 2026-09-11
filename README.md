@@ -223,6 +223,25 @@ sudo systemctl start twitch-notifications
 
 ## Configuration Options
 
+### System Tray
+
+The tray icon is enabled by default. Choose **Hide system tray** in its menu and
+confirm to hide it while notifications keep running. This saves `system_tray: false`
+in your config, so the icon stays hidden after restarts.
+
+To restore it, use **Open Config** in the TUI or edit your `config.yaml` directly:
+
+```yaml
+system_tray: true
+```
+
+Then restart the daemon with `twitch-notifications --restart`.
+You can also set `system_tray: false` in the config and restart to hide the icon.
+
+Both **Hide system tray** and **Quit** ask for confirmation, with Cancel selected
+by default. The prompts need `zenity`, included as a dependency of the Arch package.
+For source builds, install it with `sudo pacman -S zenity` or `sudo apt install zenity`.
+
 ### Watched Channels
 
 Add channel names (case-insensitive) to the `watched_channels` list in `channels.yml`. These channels will:

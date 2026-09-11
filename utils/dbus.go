@@ -33,7 +33,8 @@ var (
 
 // NewDBusService creates and registers a new DBus service
 func NewDBusService() (*DBusService, error) {
-	conn, err := dbus.SessionBus()
+	// The tray closes its shared session bus when hidden; IPC must stay connected.
+	conn, err := dbus.ConnectSessionBus()
 	if err != nil {
 		return nil, err
 	}

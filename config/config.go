@@ -98,6 +98,7 @@ type Config struct {
 	SoundFile       string           `yaml:"sound_file"`       // Optional path to sound file to play with notifications
 	PollInterval    int              `yaml:"poll_interval"`    // Polling interval in seconds for overflow channels (default: 60)
 	PeriodicRestart *bool            `yaml:"periodic_restart"` // Restart the application every hour (default: true)
+	SystemTray      *bool            `yaml:"system_tray"`      // Show the system tray icon (default: true)
 	Twitch          TwitchConfig     `yaml:"twitch"`
 }
 
@@ -115,6 +116,10 @@ func (c *Config) ShouldPeriodicRestart() bool {
 		return true // Default to true
 	}
 	return *c.PeriodicRestart
+}
+
+func (c *Config) ShouldShowSystemTray() bool {
+	return c.SystemTray == nil || *c.SystemTray
 }
 
 // TwitchConfig contains Twitch API credentials

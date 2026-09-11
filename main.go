@@ -602,10 +602,12 @@ func main() {
 
 	// Start the system tray in a goroutine (config path is set during config.Load())
 	// On Linux, systray uses GTK which needs the main thread available
-	go systray.Run(tray.OnReady, tray.OnExit)
+	if cfg.ShouldShowSystemTray() {
+		go systray.Run(tray.OnReady, tray.OnExit)
 
-	// Give systray a moment to initialize before starting heavy work
-	time.Sleep(systrayInitDelay)
+		// Give systray a moment to initialize before starting heavy work
+		time.Sleep(systrayInitDelay)
+	}
 
 	// Run all initialization in a goroutine so it doesn't block the main thread
 	// This is important on Linux where systray needs the main thread for GTK
@@ -669,7 +671,7 @@ func main() {
 	utils.CloseDBusService()
 
 	// Quit system tray
-	systray.Quit()
+	tray.Quit()
 
 	// If periodic restart or crash restart was requested, spawn a new instance before exiting
 	if restartRequested.Load() {

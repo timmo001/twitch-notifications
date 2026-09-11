@@ -6,6 +6,9 @@
 # Send a notification when the application starts
 notify_on_startup: true
 
+# Show the system tray icon. Restart the daemon after changing this setting.
+system_tray: true
+
 # Polling interval in seconds for overflow channels (channels 11+)
 # Due to Twitch's EventSub limit of 10 subscriptions, channels beyond
 # the first 10 are monitored via periodic API polling instead of real-time

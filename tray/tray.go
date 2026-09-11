@@ -1,6 +1,7 @@
 package tray
 
 import (
+	"context"
 	_ "embed"
 	"fmt"
 	"log"
@@ -47,6 +48,10 @@ var (
 	logPathMu          sync.RWMutex
 	launchTUIHandler   func()
 	launchTUIMu        sync.RWMutex
+	lifecycleMu        sync.Mutex
+	ready              bool
+	stopped            bool
+	done               = make(chan struct{})
 )
 
 func SetRecheckHandler(handler func()) {
@@ -181,6 +186,7 @@ func OnReady() {
 	systray.AddSeparator()
 
 	// ── Application ──
+	mHide := systray.AddMenuItem("Hide system tray", "Keep running; restore with system_tray: true in config and restart")
 	mRestart := systray.AddMenuItem("Restart", "Restart the application")
 	mQuit := systray.AddMenuItem("Quit", "Quit the application")
 
@@ -188,13 +194,18 @@ func OnReady() {
 	go awaitStatusRefresh(mStatus, channelItems, &channelItemsMu)
 
 	// Handle menu item clicks
-	go handleMenuClicks(mRecheck, mRecheckOpen, mOpenConfig, mOpenChannels, mOpenLog, mLaunchTUI, mRestart, mQuit)
+	go handleMenuClicks(mRecheck, mRecheckOpen, mOpenConfig, mOpenChannels, mOpenLog, mLaunchTUI, mHide, mRestart, mQuit)
 
 	// Handle clicks on pre-allocated live channel sub-menu items
 	for i := range channelItems {
 		idx := i
 		go func() {
-			for range channelItems[idx].item.ClickedCh {
+			for {
+				select {
+				case <-done:
+					return
+				case <-channelItems[idx].item.ClickedCh:
+				}
 				channelItemsMu.RLock()
 				login := channelItems[idx].login
 				channelItemsMu.RUnlock()
@@ -208,11 +219,31 @@ func OnReady() {
 			}
 		}()
 	}
+
+	lifecycleMu.Lock()
+	ready = true
+	quitRequested := stopped
+	lifecycleMu.Unlock()
+	if quitRequested {
+		systray.Quit()
+	}
 }
 
-func handleMenuClicks(mRecheck, mRecheckOpen, mOpenConfig, mOpenChannels, mOpenLog, mLaunchTUI, mRestart, mQuit *systray.MenuItem) {
+func handleMenuClicks(mRecheck, mRecheckOpen, mOpenConfig, mOpenChannels, mOpenLog, mLaunchTUI, mHide, mRestart, mQuit *systray.MenuItem) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func(done <-chan struct{}) {
+		select {
+		case <-done:
+			cancel()
+		case <-ctx.Done():
+		}
+	}(done)
+
 	for {
 		select {
+		case <-done:
+			return
 		case <-mRecheck.ClickedCh:
 			if handler := getRecheckHandler(); handler != nil {
 				go handler()
@@ -262,8 +293,24 @@ func handleMenuClicks(mRecheck, mRecheckOpen, mOpenConfig, mOpenChannels, mOpenL
 				go handler()
 			}
 
+		case <-mHide.ClickedCh:
+			message := fmt.Sprintf("Hide the Twitch Notifications tray icon? Notifications will keep running. To restore it, edit %s, set system_tray: true, then run twitch-notifications --restart.", config.GetConfigPath())
+			if !confirmAction(ctx, "Hide system tray", message) {
+				continue
+			}
+			if err := config.SaveSystemTray(config.GetConfigPath(), false); err != nil {
+				log.Printf("Failed to hide system tray: %v", err)
+				continue
+			}
+			log.Println("System tray hidden. Set system_tray: true in config and restart to restore it.")
+			Quit()
+			return
+
 		case <-mQuit.ClickedCh:
-			systray.Quit()
+			if !confirmAction(ctx, "Quit Twitch Notifications", "Quit Twitch Notifications? Live stream notifications will stop until you start it again.") {
+				continue
+			}
+			Quit()
 			if err := utils.SendShutdownSignal(); err != nil {
 				log.Printf("Failed to send shutdown signal: %v", err)
 			}
@@ -273,8 +320,13 @@ func handleMenuClicks(mRecheck, mRecheckOpen, mOpenConfig, mOpenChannels, mOpenL
 }
 
 func awaitStatusRefresh(mStatus *systray.MenuItem, channelItems []channelItem, channelItemsMu *sync.RWMutex) {
-	for range refreshCh {
-		updateStatus(mStatus, channelItems, channelItemsMu)
+	for {
+		select {
+		case <-done:
+			return
+		case <-refreshCh:
+			updateStatus(mStatus, channelItems, channelItemsMu)
+		}
 	}
 }
 
@@ -282,6 +334,12 @@ func awaitStatusRefresh(mStatus *systray.MenuItem, channelItems []channelItem, c
 const maxMenuItemLen = 60
 
 func updateStatus(mStatus *systray.MenuItem, channelItems []channelItem, channelItemsMu *sync.RWMutex) {
+	lifecycleMu.Lock()
+	defer lifecycleMu.Unlock()
+	if stopped {
+		return
+	}
+
 	handler := getStatusHandler()
 	if handler == nil {
 		return
@@ -328,4 +386,18 @@ func truncate(s string, max int) string {
 // OnExit is called when the system tray is exiting
 func OnExit() {
 	// Cleanup if needed
+}
+
+// Quit stops the tray without stopping notifications, including when startup is still pending.
+func Quit() {
+	lifecycleMu.Lock()
+	if !stopped {
+		stopped = true
+		close(done)
+	}
+	wasReady := ready
+	lifecycleMu.Unlock()
+	if wasReady {
+		systray.Quit()
+	}
 }
