@@ -31,7 +31,7 @@ concurrency:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    container: archlinux:latest@sha256:b0deabeb3d283da2c7f7dbf0eea051b7b2cd0554e0b737cc457fd21683bdcdd1
+    container: archlinux:latest@sha256:63c7b061c0c001cb7ce4f8d11b63d351c23e7f97121bc5c8bd5d9f431e615d7d
     steps:
       - name: Install validation tools
         run: |
