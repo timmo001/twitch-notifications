@@ -2,7 +2,7 @@ module twitch-notifications
 
 go 1.26.0
 
-toolchain go1.26.6
+toolchain go1.27.1
 
 require (
 	fyne.io/systray v1.12.2
