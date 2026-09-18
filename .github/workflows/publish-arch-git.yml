@@ -37,7 +37,7 @@ jobs:
   publish:
     name: Publish Arch package (twitch-notifications-git)
     # yamllint disable-line rule:line-length
-    uses: timmo001/workflows/.github/workflows/build-arch-package.yml@4c009ef8917b2e71106a0a4327fb0331a77d24a1  # master
+    uses: timmo001/workflows/.github/workflows/build-arch-package.yml@11f2ba2f32be473e4de25ca6276f373a68c1893f  # master
     with:
       package-name: twitch-notifications-git
     secrets:
