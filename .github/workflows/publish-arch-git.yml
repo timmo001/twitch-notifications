@@ -16,7 +16,6 @@ on:
       - "config/**"
       - "notify/**"
       - "tray/**"
-      - "tui/**"
       - "twitch/**"
       - "utils/**"
       - .scripts/linux/PKGBUILD

@@ -24,12 +24,11 @@ func handleCLICommand(args []string, defaultConfigPath string) (bool, error) {
 	case "channel":
 		return true, handleChannelCommand(filteredArgs[1:], configPath)
 	case "serve":
-		// Explicit server mode — skip TTY detection and run the server directly
 		return false, nil
-	case "tui":
-		// Explicit TUI launch
-		return true, launchTUI()
 	default:
+		if !strings.HasPrefix(filteredArgs[0], "-") {
+			return true, fmt.Errorf("unknown command %q; use --help for usage", filteredArgs[0])
+		}
 		return false, nil
 	}
 }

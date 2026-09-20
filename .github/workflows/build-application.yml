@@ -32,5 +32,5 @@ jobs:
       - name: Test application
         run: mise run test
 
-      - name: Build application and TUI
+      - name: Build application
         run: mise run build:all

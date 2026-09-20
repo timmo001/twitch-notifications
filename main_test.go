@@ -12,6 +12,18 @@ func boolPointer(value bool) *bool {
 	return &value
 }
 
+func TestRemovedTUICommandDoesNotStartDaemon(t *testing.T) {
+	for _, args := range [][]string{
+		{"tui"},
+		{"--config", "custom.yaml", "tui"},
+	} {
+		handled, err := handleCLICommand(args, "config.yaml")
+		if !handled || err == nil {
+			t.Fatalf("handleCLICommand(%q) = (%t, %v), want handled error", args, handled, err)
+		}
+	}
+}
+
 func TestBuildFollowedLiveChannelsIncludesWatchedChannels(t *testing.T) {
 	t.Parallel()
 

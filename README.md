@@ -39,7 +39,7 @@ mise install
 mise run deps
 ```
 
-Build the application and TUI:
+Build the application:
 
 ```bash
 mise run build:all
@@ -110,6 +110,9 @@ installed plugin and packaged daemon.
    - Set either `access_token`, or both `access_token` and `refresh_token`
 
 ## Usage
+
+Run `twitch-notifications --help` for command-line options. Running
+`twitch-notifications` without arguments starts the notification daemon.
 
 ### Manage Channels
 
@@ -229,7 +232,7 @@ The tray icon is enabled by default. Choose **Hide system tray** in its menu and
 confirm to hide it while notifications keep running. This saves `system_tray: false`
 in your config, so the icon stays hidden after restarts.
 
-To restore it, use **Open Config** in the TUI or edit your `config.yaml` directly:
+To restore it, edit your `config.yaml`:
 
 ```yaml
 system_tray: true

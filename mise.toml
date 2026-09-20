@@ -1,7 +1,6 @@
 min_version = "2025.1.0"
 
 [tools]
-bun = "1.4.2"
 go = "1.26.6"
 
 [tasks.build]
@@ -12,14 +11,9 @@ VERSION="$(printf 'r%s.%s' "$(git rev-list --count HEAD 2>/dev/null || printf 0)
 go build -v -ldflags="-X 'main.Version=$VERSION'" -o twitch-notifications .
 '''
 
-[tasks."build:tui"]
-description = "Build the TUI binary"
-dir = "tui"
-run = "bun install --frozen-lockfile && bun run build"
-
 [tasks."build:all"]
-description = "Build the Go application and TUI"
-depends = ["build", "build:tui"]
+description = "Build the Go application"
+depends = ["build"]
 
 [tasks.install]
 description = "Install the Go application"
@@ -75,11 +69,6 @@ run = "pitchfork restart backend panel && omarchy restart shell && omarchy-shell
 description = "Stop development and restore the packaged daemon and installed panel"
 run = "pitchfork stop panel backend && omarchy restart shell"
 
-[tasks."run:tui"]
-description = "Build and run the TUI"
-depends = ["build:tui"]
-run = "./tui/dist/twitch-notifications-tui"
-
 [tasks.test]
 description = "Run Go tests"
 run = "go test -v ./..."
@@ -95,18 +84,9 @@ fi
 go vet ./...
 '''
 
-[tasks."lint:tui"]
-description = "Check TUI formatting and types"
-dir = "tui"
-run = '''
-bun install --frozen-lockfile
-bun run format:check
-bun run typecheck
-'''
-
 [tasks."lint:all"]
 description = "Run all linters"
-depends = ["lint:go", "lint:tui"]
+depends = ["lint:go"]
 
 [tasks.check]
 description = "Run all linters and tests"
@@ -114,7 +94,7 @@ depends = ["lint:all", "test"]
 
 [tasks.clean]
 description = "Remove build artefacts"
-run = "rm -f twitch-notifications tui/dist/twitch-notifications-tui"
+run = "rm -f twitch-notifications"
 
 [tasks."clean:dist"]
 description = "Remove package build artefacts"
@@ -122,10 +102,7 @@ run = "rm -rf build dist"
 
 [tasks.deps]
 description = "Install all dependencies"
-run = '''
-go mod tidy
-(cd tui && bun install)
-'''
+run = "go mod tidy"
 
 [tasks."package:arch"]
 description = "Create the Arch Linux package"

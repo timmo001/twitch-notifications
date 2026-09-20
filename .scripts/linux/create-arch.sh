@@ -29,19 +29,12 @@ if [ ! -f "twitch-notifications" ]; then
   exit 1
 fi
 
-# Check if TUI binary exists
-if [ ! -f "tui/dist/twitch-notifications-tui" ]; then
-  echo "twitch-notifications-tui not found, please build the TUI first (mise run build:tui)"
-  exit 1
-fi
-
 # Create build directory
 mkdir -p build/arch
 cd build/arch
 
 # Copy necessary files
 cp ../../twitch-notifications twitch-notifications
-cp ../../tui/dist/twitch-notifications-tui twitch-notifications-tui
 cp ../../.scripts/linux/twitch-notifications-recheck .
 cp ../../.scripts/linux/twitch-notifications-restart .
 cp ../../.scripts/linux/twitch-notifications.desktop .

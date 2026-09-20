@@ -61,11 +61,11 @@ func TestTrayConfirmation(t *testing.T) {
 			unused := &systray.MenuItem{ClickedCh: make(chan struct{})}
 			hide := &systray.MenuItem{ClickedCh: make(chan struct{})}
 			quit := &systray.MenuItem{ClickedCh: make(chan struct{})}
-			launch := &systray.MenuItem{ClickedCh: make(chan struct{})}
+			recheck := &systray.MenuItem{ClickedCh: make(chan struct{})}
 			finished := make(chan struct{})
 			go func() {
 				defer close(finished)
-				handleMenuClicks(unused, unused, unused, unused, unused, launch, hide, unused, quit)
+				handleMenuClicks(recheck, unused, unused, unused, unused, hide, unused, quit)
 			}()
 			t.Cleanup(func() {
 				Quit()
@@ -79,7 +79,7 @@ func TestTrayConfirmation(t *testing.T) {
 			if !tc.wantHidden {
 				// Receiving another action proves cancellation or failure leaves the tray usable.
 				select {
-				case launch.ClickedCh <- struct{}{}:
+				case recheck.ClickedCh <- struct{}{}:
 				case <-time.After(time.Second):
 					t.Fatal("tray stopped handling actions after cancellation or failure")
 				}

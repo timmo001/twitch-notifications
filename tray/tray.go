@@ -46,8 +46,6 @@ var (
 	openStreamMu       sync.RWMutex
 	logPathHandler     func() string
 	logPathMu          sync.RWMutex
-	launchTUIHandler   func()
-	launchTUIMu        sync.RWMutex
 	lifecycleMu        sync.Mutex
 	ready              bool
 	stopped            bool
@@ -126,18 +124,6 @@ func getLogPathHandler() func() string {
 	return logPathHandler
 }
 
-func SetLaunchTUIHandler(handler func()) {
-	launchTUIMu.Lock()
-	defer launchTUIMu.Unlock()
-	launchTUIHandler = handler
-}
-
-func getLaunchTUIHandler() func() {
-	launchTUIMu.RLock()
-	defer launchTUIMu.RUnlock()
-	return launchTUIHandler
-}
-
 // refreshCh allows callers to trigger a status update via RefreshStatus().
 var refreshCh = make(chan struct{}, 1)
 
@@ -181,7 +167,6 @@ func OnReady() {
 	mOpenConfig := systray.AddMenuItem("Open Config", "Open configuration file")
 	mOpenChannels := systray.AddMenuItem("Open Channels", "Open channels file")
 	mOpenLog := systray.AddMenuItem("Open Log", "Open today's log file")
-	mLaunchTUI := systray.AddMenuItem("Launch TUI", "Open the TUI in a terminal")
 
 	systray.AddSeparator()
 
@@ -194,7 +179,7 @@ func OnReady() {
 	go awaitStatusRefresh(mStatus, channelItems, &channelItemsMu)
 
 	// Handle menu item clicks
-	go handleMenuClicks(mRecheck, mRecheckOpen, mOpenConfig, mOpenChannels, mOpenLog, mLaunchTUI, mHide, mRestart, mQuit)
+	go handleMenuClicks(mRecheck, mRecheckOpen, mOpenConfig, mOpenChannels, mOpenLog, mHide, mRestart, mQuit)
 
 	// Handle clicks on pre-allocated live channel sub-menu items
 	for i := range channelItems {
@@ -229,7 +214,7 @@ func OnReady() {
 	}
 }
 
-func handleMenuClicks(mRecheck, mRecheckOpen, mOpenConfig, mOpenChannels, mOpenLog, mLaunchTUI, mHide, mRestart, mQuit *systray.MenuItem) {
+func handleMenuClicks(mRecheck, mRecheckOpen, mOpenConfig, mOpenChannels, mOpenLog, mHide, mRestart, mQuit *systray.MenuItem) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func(done <-chan struct{}) {
@@ -281,11 +266,6 @@ func handleMenuClicks(mRecheck, mRecheckOpen, mOpenConfig, mOpenChannels, mOpenL
 						log.Printf("Failed to open log: %v", err)
 					}
 				}
-			}
-
-		case <-mLaunchTUI.ClickedCh:
-			if handler := getLaunchTUIHandler(); handler != nil {
-				go handler()
 			}
 
 		case <-mRestart.ClickedCh:

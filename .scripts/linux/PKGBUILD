@@ -8,7 +8,7 @@ arch=('x86_64')
 url="https://github.com/timmo001/twitch-notifications"
 license=('Apache-2.0')
 keywords=('twitch' 'notifications' 'desktop' 'daemon' 'livestream')
-makedepends=('git' 'go' 'bun')
+makedepends=('git' 'go')
 depends=('glibc' 'libnotify' 'uwsm' 'zenity')
 provides=('twitch-notifications')
 conflicts=('twitch-notifications')
@@ -27,17 +27,12 @@ build() {
   local version
   version="$(printf 'r%s.%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)")"
   go build -v -ldflags="-X 'main.Version=${version}'" -o twitch-notifications .
-
-  cd tui
-  bun install --frozen-lockfile
-  bun run build
 }
 
 package() {
   cd "$srcdir/$pkgname"
 
   install -Dm755 twitch-notifications "$pkgdir/usr/bin/twitch-notifications"
-  install -Dm755 tui/dist/twitch-notifications-tui "$pkgdir/usr/bin/twitch-notifications-tui"
   install -Dm755 .scripts/linux/twitch-notifications-recheck "$pkgdir/usr/bin/twitch-notifications-recheck"
   install -Dm755 .scripts/linux/twitch-notifications-restart "$pkgdir/usr/bin/twitch-notifications-restart"
   install -Dm644 .scripts/linux/twitch-notifications.desktop "$pkgdir/usr/share/applications/twitch-notifications.desktop"

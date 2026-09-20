@@ -428,12 +428,6 @@ func main() {
 		return
 	}
 
-	// If no arguments were given and we're in an interactive terminal,
-	// try to launch the TUI instead of the server.
-	if len(os.Args) == 1 {
-		maybeLaunchTUI()
-	}
-
 	configPath := flag.String("config", defaultConfigPath, "Path to configuration file")
 	recheck := flag.Bool("recheck", false, "Trigger a recheck for live channels on a running instance and exit")
 	restart := flag.Bool("restart", false, "Gracefully restart a running instance and exit")
@@ -445,6 +439,11 @@ func main() {
 	maxChars := flag.Int("max-chars", 0, "Maximum characters per live channel line in --status-bar-json tooltip")
 	startupDelay := flag.Bool("delay", false, "Delay startup to allow the previous instance to fully shut down (used during periodic restart)")
 	silent := flag.Bool("silent", false, "Suppress startup and initial monitoring notifications (used during periodic restart)")
+	flag.Usage = func() {
+		fmt.Fprintln(flag.CommandLine.Output(), "Usage: twitch-notifications [options]\n       twitch-notifications serve\n       twitch-notifications channel <add|remove> [arguments]\n\nRunning without arguments starts the notification daemon.\n\nOptions:")
+		flag.PrintDefaults()
+		fmt.Fprintln(flag.CommandLine.Output(), "\n"+channelCommandUsage())
+	}
 	flag.Parse()
 	if *followedLiveJSON {
 		cfg, err := config.Load(*configPath)
@@ -1318,16 +1317,6 @@ func runNotifier(ctx context.Context, cfg *config.Config, configPath string, sil
 		}
 		logFile := time.Now().Format("2006-01-02") + ".log"
 		return filepath.Join(homeDir, ".local", "state", "twitch-notifications", logFile)
-	})
-
-	// Register TUI launcher for tray menu (opens TUI in a terminal emulator)
-	tray.SetLaunchTUIHandler(func() {
-		tuiPath, found := findTUIBinary()
-		if !found {
-			log.Printf("Cannot launch TUI: %s binary not found", tuiBinaryName)
-			return
-		}
-		launchTUIInTerminal(tuiPath)
 	})
 
 	// Register DBus service for IPC (allows triggering recheck via dbus-send)
