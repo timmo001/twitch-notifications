@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -15,17 +16,34 @@ import (
 	"twitch-notifications/utils"
 )
 
-// httpClientTimeout uses the shared constant for HTTP requests
-var httpClientTimeout = utils.HTTPClientTimeout
-
 // Token timing constants
 const (
 	tokenExpiryBuffer = 5 * time.Minute // Refresh tokens before they expire
+	tokenEndpoint     = "https://id.twitch.tv/oauth2/token"
 )
+
+var ErrMissingToken = errors.New("no valid access token and no refresh token available")
+
+// OAuthError excludes response bodies so credentials cannot leak through logs.
+type OAuthError struct {
+	StatusCode          int
+	InvalidRefreshToken bool
+}
+
+func (e *OAuthError) Error() string {
+	if e.InvalidRefreshToken {
+		return "OAuth refresh token is invalid"
+	}
+	return fmt.Sprintf("OAuth request failed (status %d)", e.StatusCode)
+}
+
+func (e *OAuthError) IsAuthError() bool {
+	return e.StatusCode == http.StatusUnauthorized || e.InvalidRefreshToken
+}
 
 // TokenRefreshCallback is called when tokens are refreshed
 // It receives the new access token and refresh token
-type TokenRefreshCallback func(accessToken, refreshToken string)
+type TokenRefreshCallback func(accessToken, refreshToken string) error
 
 // tokenResponse represents the response from Twitch OAuth token endpoint
 type tokenResponse struct {
@@ -43,7 +61,11 @@ type TokenManager struct {
 	ExpiresAt      time.Time
 	OnTokenRefresh TokenRefreshCallback // Called when tokens are refreshed
 	mu             sync.RWMutex         // Protects token fields
-	refreshMu      sync.Mutex           // Prevents concurrent refresh operations
+	refresh        chan struct{}        // Serialises refreshes with cancellable waiting
+	tokensDirty    bool
+	httpClient     *http.Client
+	tokenURL       string
+	retryOptions   utils.RetryOptions
 }
 
 // SetRefreshToken sets the refresh token
@@ -66,6 +88,10 @@ func NewTokenManager(clientID, clientSecret, accessToken string) *TokenManager {
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
 		AccessToken:  accessToken,
+		refresh:      make(chan struct{}, 1),
+		httpClient:   &http.Client{Timeout: utils.HTTPClientTimeout},
+		tokenURL:     tokenEndpoint,
+		retryOptions: utils.DefaultRetryOptions(),
 	}
 }
 
@@ -93,9 +119,12 @@ func (tm *TokenManager) validateTokenLocked() bool {
 // It serializes refresh operations to prevent race conditions where multiple
 // goroutines attempt to refresh simultaneously, which could invalidate tokens.
 func (tm *TokenManager) GetAccessToken(ctx context.Context) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	// Fast path: check if token is already valid
 	tm.mu.RLock()
-	if tm.validateTokenLocked() {
+	if tm.validateTokenLocked() && !tm.tokensDirty {
 		token := tm.AccessToken
 		tm.mu.RUnlock()
 		return token, nil
@@ -104,14 +133,21 @@ func (tm *TokenManager) GetAccessToken(ctx context.Context) (string, error) {
 	tm.mu.RUnlock()
 
 	if !hasRefreshToken {
-		return "", fmt.Errorf("no valid access token and no refresh token available")
+		return "", ErrMissingToken
 	}
 
-	// Serialize refresh operations to prevent concurrent refreshes.
-	// This is critical because Twitch refresh tokens are one-time use:
-	// using an already-used refresh token can invalidate all tokens.
-	tm.refreshMu.Lock()
-	defer tm.refreshMu.Unlock()
+	select {
+	case tm.refresh <- struct{}{}:
+		defer func() { <-tm.refresh }()
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if err := tm.persistTokens(); err != nil {
+		return "", err
+	}
 
 	// Double-check: another goroutine may have refreshed while we waited for the lock
 	tm.mu.RLock()
@@ -123,8 +159,11 @@ func (tm *TokenManager) GetAccessToken(ctx context.Context) (string, error) {
 	tm.mu.RUnlock()
 
 	// Now safe to refresh - we hold the refresh lock
-	if err := tm.RefreshAccessTokenWithRetry(ctx); err != nil {
+	if err := tm.refreshAccessTokenWithRetry(ctx); err != nil {
 		return "", fmt.Errorf("failed to refresh token: %w", err)
+	}
+	if err := tm.persistTokens(); err != nil {
+		return "", err
 	}
 
 	tm.mu.RLock()
@@ -133,9 +172,8 @@ func (tm *TokenManager) GetAccessToken(ctx context.Context) (string, error) {
 	return token, nil
 }
 
-// RefreshAccessToken refreshes the access token using the refresh token.
-// This is the low-level refresh without retry logic.
-func (tm *TokenManager) RefreshAccessToken(ctx context.Context) error {
+// refreshAccessToken runs while the caller owns the refresh slot.
+func (tm *TokenManager) refreshAccessToken(ctx context.Context) error {
 	tm.mu.RLock()
 	refreshToken := tm.RefreshToken
 	clientID := tm.ClientID
@@ -148,35 +186,28 @@ func (tm *TokenManager) RefreshAccessToken(ctx context.Context) error {
 	data.Set("client_id", clientID)
 	data.Set("client_secret", clientSecret)
 
-	req, err := http.NewRequestWithContext(ctx, "POST", "https://id.twitch.tv/oauth2/token", strings.NewReader(data.Encode()))
+	req, err := http.NewRequestWithContext(ctx, "POST", tm.tokenURL, strings.NewReader(data.Encode()))
 	if err != nil {
 		// Request creation errors are not retryable
 		return err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	client := &http.Client{Timeout: httpClientTimeout}
-	resp, err := client.Do(req)
+	resp, err := tm.httpClient.Do(req)
 	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		// Network errors are retryable
 		return utils.NewRetryableError(err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		err := fmt.Errorf("token refresh failed (status %d): %s", resp.StatusCode, string(body))
-
-		// 401/403 errors are not retryable (invalid credentials)
-		// 5xx errors and 429 are retryable
-		if resp.StatusCode >= 500 || resp.StatusCode == 429 {
+	tokenResp, err := decodeTokenResponse(resp)
+	if err != nil {
+		if resp.StatusCode >= 500 && resp.StatusCode < 600 || resp.StatusCode == http.StatusTooManyRequests {
 			return utils.NewRetryableError(err)
 		}
-		return err
-	}
-
-	var tokenResp tokenResponse
-	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
 		return err
 	}
 
@@ -187,33 +218,34 @@ func (tm *TokenManager) RefreshAccessToken(ctx context.Context) error {
 		tm.RefreshToken = tokenResp.RefreshToken
 	}
 	tm.ExpiresAt = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
-	callback := tm.OnTokenRefresh
-	newAccessToken := tm.AccessToken
-	newRefreshToken := tm.RefreshToken
+	tm.tokensDirty = tm.OnTokenRefresh != nil
 	tm.mu.Unlock()
-
-	// Call persistence callback if set (outside lock to avoid deadlocks)
-	if callback != nil {
-		callback(newAccessToken, newRefreshToken)
-	}
-
 	return nil
 }
 
-// RefreshAccessTokenWithRetry refreshes the access token with exponential backoff retry.
-// It retries on transient errors (network issues, 5xx, 429) but not on auth errors (401/403).
-func (tm *TokenManager) RefreshAccessTokenWithRetry(ctx context.Context) error {
-	opts := utils.RetryOptions{
-		MaxAttempts: 10,
-		BaseDelay:   1 * time.Second,
-		MaxDelay:    5 * time.Minute,
-		Jitter:      0.2,
+func (tm *TokenManager) persistTokens() error {
+	tm.mu.RLock()
+	dirty := tm.tokensDirty
+	callback := tm.OnTokenRefresh
+	accessToken, refreshToken := tm.AccessToken, tm.RefreshToken
+	tm.mu.RUnlock()
+	if !dirty || callback == nil {
+		return nil
 	}
+	if err := callback(accessToken, refreshToken); err != nil {
+		return fmt.Errorf("failed to save refreshed tokens: %w", err)
+	}
+	tm.mu.Lock()
+	tm.tokensDirty = false
+	tm.mu.Unlock()
+	return nil
+}
 
+func (tm *TokenManager) refreshAccessTokenWithRetry(ctx context.Context) error {
 	attempt := 0
 	return utils.Retry(ctx, func() error {
 		attempt++
-		err := tm.RefreshAccessToken(ctx)
+		err := tm.refreshAccessToken(ctx)
 		if err != nil {
 			if utils.IsRetryable(err) {
 				log.Printf("Token refresh attempt %d failed (will retry): %v", attempt, err)
@@ -224,7 +256,37 @@ func (tm *TokenManager) RefreshAccessTokenWithRetry(ctx context.Context) error {
 			log.Printf("Token refresh succeeded on attempt %d", attempt)
 		}
 		return nil
-	}, opts)
+	}, tm.retryOptions)
+}
+
+func decodeTokenResponse(resp *http.Response) (tokenResponse, error) {
+	const maxResponseSize = 64 << 10
+	var token tokenResponse
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize+1))
+	if err != nil {
+		return token, fmt.Errorf("read OAuth response: %w", err)
+	}
+	if len(body) > maxResponseSize {
+		return token, fmt.Errorf("OAuth response exceeds size limit")
+	}
+	if resp.StatusCode != http.StatusOK {
+		var failure struct {
+			Message string `json:"message"`
+		}
+		// Classification uses only the documented message, never raw error text.
+		json.Unmarshal(body, &failure)
+		return token, &OAuthError{
+			StatusCode:          resp.StatusCode,
+			InvalidRefreshToken: resp.StatusCode == http.StatusBadRequest && strings.EqualFold(failure.Message, "Invalid refresh token"),
+		}
+	}
+	if err := json.Unmarshal(body, &token); err != nil {
+		return token, fmt.Errorf("invalid OAuth token response")
+	}
+	if strings.TrimSpace(token.AccessToken) == "" || token.ExpiresIn <= 0 || int64(token.ExpiresIn) > int64((1<<63-1)/time.Second) {
+		return token, fmt.Errorf("OAuth response has an invalid access token or expiry")
+	}
+	return token, nil
 }
 
 // GetAuthorizationURL generates the OAuth authorization URL
@@ -247,36 +309,29 @@ func ExchangeCodeForToken(ctx context.Context, clientID, clientSecret, code, red
 	data.Set("grant_type", "authorization_code")
 	data.Set("redirect_uri", redirectURI)
 
-	req, err := http.NewRequestWithContext(ctx, "POST", "https://id.twitch.tv/oauth2/token", strings.NewReader(data.Encode()))
+	req, err := http.NewRequestWithContext(ctx, "POST", tokenEndpoint, strings.NewReader(data.Encode()))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	client := &http.Client{Timeout: httpClientTimeout}
+	client := &http.Client{Timeout: utils.HTTPClientTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("token exchange failed: %s", string(body))
-	}
-
-	var tokenResp tokenResponse
-	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
+	tokenResp, err := decodeTokenResponse(resp)
+	if err != nil {
 		return nil, err
 	}
-
-	tm := &TokenManager{
-		ClientID:     clientID,
-		ClientSecret: clientSecret,
-		AccessToken:  tokenResp.AccessToken,
-		RefreshToken: tokenResp.RefreshToken,
-		ExpiresAt:    time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second),
+	if strings.TrimSpace(tokenResp.RefreshToken) == "" {
+		return nil, fmt.Errorf("OAuth response is missing a refresh token")
 	}
+	tm := NewTokenManager(clientID, clientSecret, tokenResp.AccessToken)
+	tm.RefreshToken = tokenResp.RefreshToken
+	tm.ExpiresAt = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
 
 	return tm, nil
 }

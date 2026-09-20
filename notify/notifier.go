@@ -1,18 +1,21 @@
 package notify
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const omarchyNotificationGlyph = "󰕃"
 
 // Notifier handles desktop notifications
 type Notifier struct {
+	ctx         context.Context
 	dbus        *DBusNotifier
 	appName     string
 	soundFile   string
@@ -20,7 +23,7 @@ type Notifier struct {
 }
 
 // NewNotifier creates a new notification handler
-func NewNotifier(appName, soundFile string, openURL func(string) error) (*Notifier, error) {
+func NewNotifier(ctx context.Context, appName, soundFile string, openURL func(string) error) (*Notifier, error) {
 	omarchyPath := findOmarchy()
 	dbus, err := NewDBusNotifier(appName, openURL)
 	if err != nil && omarchyPath == "" {
@@ -31,6 +34,7 @@ func NewNotifier(appName, soundFile string, openURL func(string) error) (*Notifi
 	}
 
 	return &Notifier{
+		ctx:         ctx,
 		dbus:        dbus,
 		appName:     appName,
 		soundFile:   soundFile,
@@ -47,15 +51,23 @@ func findOmarchy() string {
 }
 
 func (n *Notifier) notify(title, body, actionURL string) error {
+	ctx, cancel := context.WithTimeout(n.ctx, 10*time.Second)
+	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if n.omarchyPath != "" {
-		if err := exec.Command(n.omarchyPath, omarchyNotificationArgs(n.appName, title, body, actionURL)...).Run(); err == nil {
+		if err := exec.CommandContext(ctx, n.omarchyPath, omarchyNotificationArgs(n.appName, title, body, actionURL)...).Run(); err == nil {
 			return nil
 		} else {
 			log.Printf("Omarchy notification failed, falling back to DBus: %v", err)
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
-	return n.notifyWithDBus(title, body, actionURL)
+	return n.notifyWithDBus(ctx, title, body, actionURL)
 }
 
 func omarchyNotificationArgs(appName, title, body, actionURL string) []string {
@@ -84,11 +96,11 @@ func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
-func (n *Notifier) notifyWithDBus(title, body, actionURL string) error {
+func (n *Notifier) notifyWithDBus(ctx context.Context, title, body, actionURL string) error {
 	if n.dbus == nil {
 		return fmt.Errorf("DBus notification fallback is unavailable")
 	}
-	_, err := n.dbus.Notify(title, body, "", actionURL)
+	_, err := n.dbus.Notify(ctx, title, body, "", actionURL)
 	if err != nil {
 		return fmt.Errorf("failed to show notification: %w", err)
 	}
@@ -147,7 +159,7 @@ func (n *Notifier) playSound(soundFile string) error {
 
 // tryPlaySound attempts to play a sound using the specified command
 func (n *Notifier) tryPlaySound(cmd, file string) error {
-	player := exec.Command(cmd, file)
+	player := exec.CommandContext(n.ctx, cmd, file)
 	if err := player.Run(); err != nil {
 		return fmt.Errorf("%s failed: %w", cmd, err)
 	}

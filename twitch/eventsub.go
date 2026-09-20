@@ -2,8 +2,10 @@ package twitch
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
+	"net/url"
 	"sync"
 	"time"
 
@@ -13,518 +15,319 @@ import (
 )
 
 const (
-	eventsubURL = "wss://eventsub.wss.twitch.tv/ws"
-
-	// Reconnection backoff constants
-	reconnectBaseDelay = 1 * time.Second
-	reconnectMaxDelay  = 2 * time.Minute
-	reconnectJitter    = 0.2 // ±20% jitter
-
-	// WebSocket timing
+	eventsubURL        = "wss://eventsub.wss.twitch.tv/ws"
 	wsHandshakeTimeout = 10 * time.Second
 	wsReadDeadline     = 60 * time.Second
-	wsCloseTimeout     = 1 * time.Second
-	wsShutdownWait     = 3 * time.Second
+	wsCloseTimeout     = time.Second
 )
 
-// EventSubClient manages the EventSub WebSocket connection
+// EventSubClient owns its readers, reconnect attempts and subscription callbacks.
 type EventSubClient struct {
-	conn             *websocket.Conn
-	sessionID        string
-	reconnectURL     string
-	clientID         string
-	accessToken      string
-	subscriptions    map[string]bool // broadcaster_user_id -> subscribed
-	subscriptionsMu  sync.RWMutex
-	onStreamOnline   func(StreamOnlineEvent)
-	onSessionReady   func(string) // Called when session is ready with session ID
-	ctx              context.Context
-	cancel           context.CancelFunc
-	wg               sync.WaitGroup
-	mu               sync.Mutex
-	reconnecting     bool // Flag to prevent multiple simultaneous reconnects
-	sessionNotified  bool // Track if we've notified about this session
-	reconnectAttempt int  // Current reconnection attempt (for exponential backoff)
+	ctx            context.Context
+	cancel         context.CancelFunc
+	wg             sync.WaitGroup
+	mu             sync.Mutex
+	conn           *websocket.Conn
+	sessionID      string
+	sessionCancel  context.CancelFunc
+	started        bool
+	reconnecting   bool
+	onStreamOnline func(StreamOnlineEvent)
+	onSessionReady func(context.Context, string)
+	url            string
+	dialer         websocket.Dialer
+	retryOptions   utils.RetryOptions
 }
 
-// StreamOnlineEvent represents a stream.online event
+type eventSubMessage struct {
+	Metadata struct {
+		MessageType string `json:"message_type"`
+	} `json:"metadata"`
+	Payload json.RawMessage `json:"payload"`
+}
+
+type eventSubSessionPayload struct {
+	Session struct {
+		ID                      string `json:"id"`
+		Status                  string `json:"status"`
+		KeepaliveTimeoutSeconds *int   `json:"keepalive_timeout_seconds"`
+		ReconnectURL            string `json:"reconnect_url"`
+	} `json:"session"`
+}
+
+// StreamOnlineEvent represents a stream.online event.
 type StreamOnlineEvent struct {
-	BroadcasterUserID    string
-	BroadcasterUserLogin string
-	BroadcasterUserName  string
-	StreamTitle          string
-	GameName             string
-	ThumbnailURL         string
-	StartedAt            time.Time
+	BroadcasterUserID    string    `json:"broadcaster_user_id"`
+	BroadcasterUserLogin string    `json:"broadcaster_user_login"`
+	BroadcasterUserName  string    `json:"broadcaster_user_name"`
+	StreamTitle          string    `json:"title"`
+	GameName             string    `json:"game_name"`
+	ThumbnailURL         string    `json:"thumbnail_url"`
+	StartedAt            time.Time `json:"started_at"`
 }
 
-// NewEventSubClient creates a new EventSub client
-func NewEventSubClient(clientID, accessToken string, onStreamOnline func(StreamOnlineEvent), onSessionReady func(string)) *EventSubClient {
-	ctx, cancel := context.WithCancel(context.Background())
+func NewEventSubClient(ctx context.Context, onStreamOnline func(StreamOnlineEvent), onSessionReady func(context.Context, string)) *EventSubClient {
+	ctx, cancel := context.WithCancel(ctx)
 	return &EventSubClient{
-		clientID:         clientID,
-		accessToken:      accessToken,
-		subscriptions:    make(map[string]bool),
-		onStreamOnline:   onStreamOnline,
-		onSessionReady:   onSessionReady,
-		ctx:              ctx,
-		cancel:           cancel,
-		reconnecting:     false,
-		sessionNotified:  false,
-		reconnectAttempt: 0,
+		ctx:            ctx,
+		cancel:         cancel,
+		onStreamOnline: onStreamOnline,
+		onSessionReady: onSessionReady,
+		url:            eventsubURL,
+		dialer:         websocket.Dialer{HandshakeTimeout: wsHandshakeTimeout},
+		retryOptions: utils.RetryOptions{
+			BaseDelay: time.Second,
+			MaxDelay:  2 * time.Minute,
+			Jitter:    0.2,
+		},
 	}
 }
 
-// UpdateAccessToken updates the access token used for reconnections.
-// This should be called when the token is refreshed to ensure reconnections use the new token.
-func (esc *EventSubClient) UpdateAccessToken(accessToken string) {
-	esc.mu.Lock()
-	defer esc.mu.Unlock()
-	esc.accessToken = accessToken
-}
-
-// Connect establishes a WebSocket connection to EventSub
+// Connect waits for a valid welcome before starting the reader and subscriptions.
 func (esc *EventSubClient) Connect() error {
 	esc.mu.Lock()
-	defer esc.mu.Unlock()
-
-	dialer := websocket.Dialer{
-		HandshakeTimeout: wsHandshakeTimeout,
+	if err := esc.ctx.Err(); err != nil {
+		esc.mu.Unlock()
+		return err
 	}
+	if esc.started {
+		esc.mu.Unlock()
+		return fmt.Errorf("EventSub client already started")
+	}
+	esc.started = true
+	esc.wg.Add(1)
+	esc.mu.Unlock()
+	defer esc.wg.Done()
 
-	conn, _, err := dialer.Dial(eventsubURL, nil)
+	conn, sessionID, timeout, err := esc.dial(esc.url)
 	if err != nil {
 		return fmt.Errorf("failed to connect to EventSub: %w", err)
 	}
-
-	esc.conn = conn
-
-	esc.wg.Add(1)
-	go esc.readMessages()
-
-	return nil
+	return esc.activate(conn, sessionID, timeout, false)
 }
 
-// readMessages reads messages from the WebSocket connection
-func (esc *EventSubClient) readMessages() {
-	defer esc.wg.Done()
-
-	// Use recover to catch panics from failed connection reads
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("Panic in readMessages (connection likely failed): %v", r)
-			// Don't try to reconnect on panic, just exit cleanly
+func (esc *EventSubClient) dial(endpoint string) (*websocket.Conn, string, time.Duration, error) {
+	conn, resp, err := esc.dialer.DialContext(esc.ctx, endpoint, nil)
+	if err != nil {
+		if resp != nil {
+			resp.Body.Close()
 		}
-	}()
-
-	for {
-		// Check context cancellation first
-		select {
-		case <-esc.ctx.Done():
-			return
-		default:
+		return nil, "", 0, err
+	}
+	// The connection is not published yet, so cancellation must also close it
+	// while waiting for the welcome message.
+	stop := context.AfterFunc(esc.ctx, func() { conn.Close() })
+	defer stop()
+	conn.SetReadLimit(1 << 20)
+	if err := conn.SetReadDeadline(time.Now().Add(wsHandshakeTimeout)); err != nil {
+		conn.Close()
+		return nil, "", 0, err
+	}
+	var msg eventSubMessage
+	if err := conn.ReadJSON(&msg); err != nil {
+		conn.Close()
+		return nil, "", 0, fmt.Errorf("read EventSub welcome: %w", err)
+	}
+	var payload eventSubSessionPayload
+	if err := json.Unmarshal(msg.Payload, &payload); err != nil || msg.Metadata.MessageType != "session_welcome" || payload.Session.ID == "" || payload.Session.Status != "connected" {
+		conn.Close()
+		return nil, "", 0, fmt.Errorf("invalid EventSub welcome")
+	}
+	timeout := wsReadDeadline
+	if seconds := payload.Session.KeepaliveTimeoutSeconds; seconds != nil {
+		if *seconds <= 0 || *seconds > 600 {
+			conn.Close()
+			return nil, "", 0, fmt.Errorf("invalid EventSub keepalive timeout")
 		}
+		timeout = time.Duration(*seconds) * time.Second
+	}
+	return conn, payload.Session.ID, timeout, nil
+}
 
-		// Get connection with lock to check if it's still valid
-		esc.mu.Lock()
-		conn := esc.conn
+func (esc *EventSubClient) activate(conn *websocket.Conn, sessionID string, timeout time.Duration, transferred bool) error {
+	esc.mu.Lock()
+	if err := esc.ctx.Err(); err != nil {
 		esc.mu.Unlock()
-
-		if conn == nil {
-			// Connection is closed, exit
-			return
-		}
-
-		// Set read deadline - Twitch sends keepalive messages periodically
-		// Use a reasonable timeout that allows for network delays
-		// Don't set it too short to avoid false timeouts
-		if err := conn.SetReadDeadline(time.Now().Add(wsReadDeadline)); err != nil {
-			log.Printf("Failed to set read deadline: %v", err)
-			return
-		}
-
-		// Read message with panic recovery
-		var msg map[string]interface{}
-		var readErr error
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					// Connection failed, convert panic to error
-					readErr = fmt.Errorf("connection failed: %v", r)
-				}
-			}()
-			readErr = conn.ReadJSON(&msg)
-		}()
-
-		if readErr != nil {
-			// Check if context was cancelled (connection might have been closed)
-			select {
-			case <-esc.ctx.Done():
-				return
-			default:
-			}
-
-			// Check if it's a timeout (shouldn't happen often with 30s deadline)
-			if isTimeout(readErr) {
-				// Timeout is unexpected but not fatal, log and continue
-				log.Printf("Read timeout (this shouldn't happen often): %v", readErr)
-				continue
-			}
-
-			// Check if connection is closed (websocket close error)
-			if websocket.IsCloseError(readErr, websocket.CloseNormalClosure, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				log.Printf("WebSocket closed: %v", readErr)
-				return
-			}
-
-			// Check context again in case connection was closed during read
-			select {
-			case <-esc.ctx.Done():
-				return
-			default:
-			}
-
-			// Real error or panic - be conservative about reconnecting
-			// Only reconnect on actual connection failures, not transient errors
-			log.Printf("Error reading message: %v", readErr)
-
-			// Check if it's a network error that warrants reconnection
-			// Don't reconnect on every error - some might be transient
-			if websocket.IsUnexpectedCloseError(readErr, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				// Only reconnect if we're not already reconnecting
-				esc.mu.Lock()
-				shouldReconnect := !esc.reconnecting
-				esc.mu.Unlock()
-
-				if shouldReconnect {
-					log.Printf("Connection closed unexpectedly, reconnecting...")
-					esc.handleReconnect()
-				}
-			} else {
-				// For other errors, just log and continue (don't reconnect aggressively)
-				log.Printf("Non-fatal read error, continuing: %v", readErr)
-			}
-			return
-		}
-
-		if err := esc.handleMessage(msg); err != nil {
-			log.Printf("Error handling message: %v", err)
-		}
+		conn.Close()
+		return err
 	}
-}
-
-// handleMessage processes incoming WebSocket messages
-func (esc *EventSubClient) handleMessage(msg map[string]interface{}) error {
-	metadata, ok := msg["metadata"].(map[string]interface{})
-	if !ok {
-		return fmt.Errorf("invalid message format: missing metadata")
-	}
-
-	messageType, ok := metadata["message_type"].(string)
-	if !ok {
-		return fmt.Errorf("invalid message format: missing message_type")
-	}
-
-	switch messageType {
-	case "session_welcome":
-		return esc.handleSessionWelcome(msg)
-	case "session_keepalive":
-		// Keepalive received, connection is healthy
-		// Reset read deadline since we got a message
-		esc.mu.Lock()
-		conn := esc.conn
-		esc.mu.Unlock()
-		if conn != nil {
-			conn.SetReadDeadline(time.Now().Add(wsReadDeadline))
-		}
-		return nil
-	case "session_reconnect":
-		return esc.handleSessionReconnect(msg)
-	case "notification":
-		return esc.handleNotification(msg)
-	default:
-		log.Printf("Unknown message type: %s", messageType)
-		return nil
-	}
-}
-
-// handleSessionWelcome processes the session welcome message
-func (esc *EventSubClient) handleSessionWelcome(msg map[string]interface{}) error {
-	payload, ok := msg["payload"].(map[string]interface{})
-	if !ok {
-		return fmt.Errorf("invalid welcome message format")
-	}
-
-	session, ok := payload["session"].(map[string]interface{})
-	if !ok {
-		return fmt.Errorf("invalid session data")
-	}
-
-	sessionID, ok := session["id"].(string)
-	if !ok {
-		return fmt.Errorf("invalid session ID")
-	}
-
-	esc.mu.Lock()
-	oldSessionID := esc.sessionID
-	esc.sessionID = sessionID
-	esc.sessionNotified = false // Reset for new session
-	esc.mu.Unlock()
-
-	log.Printf("EventSub session established: %s", sessionID)
-
-	// Only notify if this is a new session (not a reconnect to the same session)
-	if oldSessionID != sessionID {
-		// Notify that session is ready (only once per session)
-		esc.mu.Lock()
-		if !esc.sessionNotified && esc.onSessionReady != nil {
-			esc.sessionNotified = true
-			esc.mu.Unlock()
-			esc.onSessionReady(sessionID)
-		} else {
-			esc.mu.Unlock()
-		}
-	}
-
-	return nil
-}
-
-// handleSessionReconnect processes a reconnect message
-func (esc *EventSubClient) handleSessionReconnect(msg map[string]interface{}) error {
-	payload, ok := msg["payload"].(map[string]interface{})
-	if !ok {
-		return fmt.Errorf("invalid reconnect message format")
-	}
-
-	session, ok := payload["session"].(map[string]interface{})
-	if !ok {
-		return fmt.Errorf("invalid session data")
-	}
-
-	reconnectURL, ok := session["reconnect_url"].(string)
-	if !ok {
-		return fmt.Errorf("invalid reconnect URL")
-	}
-
-	esc.mu.Lock()
-	esc.reconnectURL = reconnectURL
-	esc.mu.Unlock()
-
-	log.Printf("Reconnect requested, URL: %s", reconnectURL)
-	esc.handleReconnect()
-
-	return nil
-}
-
-// calculateReconnectDelay calculates the delay for reconnection using exponential backoff with jitter
-func (esc *EventSubClient) calculateReconnectDelay() time.Duration {
-	esc.mu.Lock()
-	attempt := esc.reconnectAttempt
-	esc.mu.Unlock()
-
-	// Use shared backoff calculation (attempt is 0-based here, but CalculateBackoff expects 1-based)
-	opts := utils.RetryOptions{
-		BaseDelay: reconnectBaseDelay,
-		MaxDelay:  reconnectMaxDelay,
-		Jitter:    reconnectJitter,
-	}
-	return utils.CalculateBackoff(attempt+1, opts)
-}
-
-// handleReconnect reconnects to the EventSub service with exponential backoff
-func (esc *EventSubClient) handleReconnect() {
-	// Check if we should reconnect (context not cancelled)
-	select {
-	case <-esc.ctx.Done():
-		return
-	default:
-	}
-
-	// Prevent multiple simultaneous reconnects
-	esc.mu.Lock()
-	if esc.reconnecting {
-		esc.mu.Unlock()
-		return // Already reconnecting
-	}
-	esc.reconnecting = true
 	oldConn := esc.conn
-	esc.conn = nil // Clear connection before closing to prevent reads
+	esc.conn = conn
+	esc.sessionID = sessionID
+	esc.reconnecting = false
+	var sessionCtx context.Context
+	if !transferred {
+		if esc.sessionCancel != nil {
+			esc.sessionCancel()
+		}
+		sessionCtx, esc.sessionCancel = context.WithCancel(esc.ctx)
+	}
+	esc.wg.Add(1)
+	if !transferred && esc.onSessionReady != nil {
+		esc.wg.Add(1)
+	}
 	esc.mu.Unlock()
 
-	// Close old connection if it exists
+	// Twitch transfers subscriptions during a requested handover. Close the old
+	// socket only after receiving the replacement's welcome.
 	if oldConn != nil {
-		// Try to send close frame gracefully
-		closeMsg := websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")
-		oldConn.WriteControl(websocket.CloseMessage, closeMsg, time.Now().Add(wsCloseTimeout))
+		oldConn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Now().Add(wsCloseTimeout))
 		oldConn.Close()
 	}
-
-	url := eventsubURL
-	esc.mu.Lock()
-	if esc.reconnectURL != "" {
-		url = esc.reconnectURL
-		esc.reconnectURL = ""
+	log.Printf("EventSub session established: %s", sessionID)
+	go esc.readMessages(conn, timeout)
+	if !transferred && esc.onSessionReady != nil {
+		go func() {
+			defer esc.wg.Done()
+			esc.onSessionReady(sessionCtx, sessionID)
+		}()
 	}
-	accessToken := esc.accessToken // Get latest token
-	esc.mu.Unlock()
-
-	dialer := websocket.Dialer{
-		HandshakeTimeout: wsHandshakeTimeout,
-	}
-
-	conn, _, err := dialer.Dial(url, nil)
-	if err != nil {
-		// Calculate backoff delay
-		delay := esc.calculateReconnectDelay()
-
-		esc.mu.Lock()
-		esc.reconnectAttempt++
-		attempt := esc.reconnectAttempt
-		esc.reconnecting = false
-		esc.mu.Unlock()
-
-		log.Printf("Failed to reconnect (attempt %d): %v. Retrying in %v...", attempt, err, delay)
-
-		// Check context before retrying
-		select {
-		case <-esc.ctx.Done():
-			return
-		case <-time.After(delay):
-			go esc.handleReconnect()
-		}
-		return
-	}
-
-	// Successful connection - reset attempt counter
-	esc.mu.Lock()
-	esc.conn = conn
-	esc.reconnecting = false
-	esc.reconnectAttempt = 0
-	esc.mu.Unlock()
-
-	log.Printf("Successfully reconnected to EventSub (using token: %s...)", accessToken[:min(10, len(accessToken))])
-
-	esc.wg.Add(1)
-	go esc.readMessages()
-}
-
-// handleNotification processes a notification event
-func (esc *EventSubClient) handleNotification(msg map[string]interface{}) error {
-	payload, ok := msg["payload"].(map[string]interface{})
-	if !ok {
-		return fmt.Errorf("invalid notification format")
-	}
-
-	subscription, ok := payload["subscription"].(map[string]interface{})
-	if !ok {
-		return fmt.Errorf("invalid subscription data")
-	}
-
-	eventType, ok := subscription["type"].(string)
-	if !ok || eventType != "stream.online" {
-		return nil
-	}
-
-	event, ok := payload["event"].(map[string]interface{})
-	if !ok {
-		return fmt.Errorf("invalid event data")
-	}
-
-	streamEvent := StreamOnlineEvent{
-		BroadcasterUserID:    getString(event, "broadcaster_user_id"),
-		BroadcasterUserLogin: getString(event, "broadcaster_user_login"),
-		BroadcasterUserName:  getString(event, "broadcaster_user_name"),
-		StreamTitle:          getString(event, "title"),
-		GameName:             getString(event, "game_name"),
-	}
-
-	if startedAtStr := getString(event, "started_at"); startedAtStr != "" {
-		if t, err := time.Parse(time.RFC3339, startedAtStr); err == nil {
-			streamEvent.StartedAt = t
-		}
-	}
-
-	if esc.onStreamOnline != nil {
-		esc.onStreamOnline(streamEvent)
-	}
-
 	return nil
 }
 
-// getString safely extracts a string from a map
-func getString(m map[string]interface{}, key string) string {
-	if v, ok := m[key].(string); ok {
-		return v
+func (esc *EventSubClient) readMessages(conn *websocket.Conn, timeout time.Duration) {
+	defer esc.wg.Done()
+	stop := context.AfterFunc(esc.ctx, func() { conn.Close() })
+	defer stop()
+	for esc.ctx.Err() == nil {
+		if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+			esc.reconnect(conn, "")
+			return
+		}
+		var msg eventSubMessage
+		if err := conn.ReadJSON(&msg); err != nil {
+			// All read failures, including timeouts, require a new socket.
+			if esc.ctx.Err() == nil {
+				log.Printf("EventSub read failed: %v", err)
+				esc.reconnect(conn, "")
+			}
+			return
+		}
+		switch msg.Metadata.MessageType {
+		case "session_keepalive":
+		case "session_reconnect":
+			var payload eventSubSessionPayload
+			if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+				log.Printf("Invalid EventSub reconnect message: %v", err)
+				continue
+			}
+			endpoint, err := url.Parse(payload.Session.ReconnectURL)
+			original, _ := url.Parse(esc.url)
+			if err != nil || endpoint.Host != original.Host || endpoint.Scheme != original.Scheme || endpoint.User != nil {
+				log.Print("Invalid EventSub reconnect URL")
+				continue
+			}
+			esc.reconnect(conn, payload.Session.ReconnectURL)
+		case "notification":
+			if err := esc.handleNotification(msg.Payload); err != nil {
+				log.Printf("Invalid EventSub notification: %v", err)
+			}
+		default:
+			log.Printf("Unknown EventSub message type: %q", msg.Metadata.MessageType)
+		}
 	}
-	return ""
 }
 
-// isTimeout checks if an error is a timeout error
-func isTimeout(err error) bool {
-	type timeout interface {
-		Timeout() bool
+func (esc *EventSubClient) reconnect(oldConn *websocket.Conn, endpoint string) {
+	esc.mu.Lock()
+	if esc.ctx.Err() != nil || esc.conn != oldConn {
+		esc.mu.Unlock()
+		return
 	}
-	if t, ok := err.(timeout); ok {
-		return t.Timeout()
+	if endpoint == "" {
+		esc.conn = nil
+		esc.sessionID = ""
+		if esc.sessionCancel != nil {
+			esc.sessionCancel()
+		}
+		oldConn.Close()
 	}
-	return false
+	if esc.reconnecting {
+		esc.mu.Unlock()
+		return
+	}
+	esc.reconnecting = true
+	esc.wg.Add(1)
+	esc.mu.Unlock()
+
+	go func() {
+		defer esc.wg.Done()
+		transferred := endpoint != ""
+		if endpoint == "" {
+			endpoint = esc.url
+		}
+		for attempt := 1; esc.ctx.Err() == nil; attempt++ {
+			// Requested handovers start immediately; ordinary reconnects back off
+			// even if the server repeatedly welcomes and then closes the socket.
+			if !transferred {
+				select {
+				case <-esc.ctx.Done():
+					return
+				case <-time.After(utils.CalculateBackoff(attempt, esc.retryOptions)):
+				}
+			}
+			conn, sessionID, timeout, err := esc.dial(endpoint)
+			if err == nil {
+				esc.activate(conn, sessionID, timeout, transferred)
+				return
+			}
+			// A failed handover falls back to a fresh session and subscriptions.
+			endpoint = esc.url
+			transferred = false
+			log.Printf("EventSub reconnect failed: %v", err)
+		}
+	}()
 }
 
-// GetSessionID returns the current session ID (thread-safe)
+func (esc *EventSubClient) handleNotification(data json.RawMessage) error {
+	var payload struct {
+		Subscription struct {
+			Type string `json:"type"`
+		} `json:"subscription"`
+		Event json.RawMessage `json:"event"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return err
+	}
+	if payload.Subscription.Type == "" {
+		return fmt.Errorf("missing subscription type")
+	}
+	if payload.Subscription.Type != "stream.online" {
+		return nil
+	}
+	var event StreamOnlineEvent
+	if err := json.Unmarshal(payload.Event, &event); err != nil {
+		return err
+	}
+	if event.BroadcasterUserID == "" || event.BroadcasterUserLogin == "" || event.BroadcasterUserName == "" || event.StartedAt.IsZero() {
+		return fmt.Errorf("missing stream.online fields")
+	}
+	if esc.onStreamOnline != nil {
+		esc.onStreamOnline(event)
+	}
+	return nil
+}
+
+// GetSessionID returns an empty ID when disconnected or shutting down.
 func (esc *EventSubClient) GetSessionID() string {
 	esc.mu.Lock()
 	defer esc.mu.Unlock()
+	if esc.ctx.Err() != nil || esc.conn == nil {
+		return ""
+	}
 	return esc.sessionID
 }
 
-// MarkSubscribed marks a broadcaster as subscribed (for tracking)
-func (esc *EventSubClient) MarkSubscribed(broadcasterUserID string) {
-	esc.subscriptionsMu.Lock()
-	defer esc.subscriptionsMu.Unlock()
-	esc.subscriptions[broadcasterUserID] = true
-}
-
-// GetSubscribedChannels returns the list of subscribed channel IDs
-func (esc *EventSubClient) GetSubscribedChannels() []string {
-	esc.subscriptionsMu.RLock()
-	defer esc.subscriptionsMu.RUnlock()
-	channels := make([]string, 0, len(esc.subscriptions))
-	for channelID := range esc.subscriptions {
-		channels = append(channels, channelID)
-	}
-	return channels
-}
-
-// Close closes the WebSocket connection
 func (esc *EventSubClient) Close() error {
 	esc.mu.Lock()
+	esc.cancel()
 	conn := esc.conn
+	esc.conn = nil
+	esc.sessionID = ""
 	esc.mu.Unlock()
-
-	// Close the WebSocket connection first to unblock ReadJSON
 	if conn != nil {
-		// Send close frame
-		closeMsg := websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")
-		conn.WriteControl(websocket.CloseMessage, closeMsg, time.Now().Add(wsCloseTimeout))
-		// Close the connection (this will cause ReadJSON to return)
 		conn.Close()
 	}
-
-	// Cancel context to signal all goroutines to stop
-	esc.cancel()
-
-	// Wait for all goroutines to finish with timeout
-	done := make(chan struct{})
-	go func() {
-		esc.wg.Wait()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		return nil
-	case <-time.After(wsShutdownWait):
-		log.Printf("Warning: timeout waiting for goroutines to finish")
-		return nil // Don't fail, just log warning
-	}
+	esc.wg.Wait()
+	return nil
 }

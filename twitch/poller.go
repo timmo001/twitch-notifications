@@ -46,11 +46,9 @@ func (p *Poller) Start(parentCtx context.Context) {
 		return
 	}
 	p.started = true
-	p.startedMu.Unlock()
-
 	p.ctx, p.cancel = context.WithCancel(parentCtx)
-
 	p.wg.Add(1)
+	p.startedMu.Unlock()
 	go p.pollLoop()
 
 	log.Printf("Poller started for %d overflow channels (polling every %v)", len(p.channels), p.pollInterval)

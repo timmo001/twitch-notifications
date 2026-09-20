@@ -1,6 +1,7 @@
 package notify
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"sync"
@@ -158,7 +159,7 @@ func (n *DBusNotifier) cleanupNotification(notifID uint32) {
 
 // Notify sends a notification via DBus
 // If actionURL is non-empty, clicking the notification will open that URL
-func (n *DBusNotifier) Notify(summary, body, icon, actionURL string) (uint32, error) {
+func (n *DBusNotifier) Notify(ctx context.Context, summary, body, icon, actionURL string) (uint32, error) {
 	obj := n.conn.Object(dbusDestination, dbusPath)
 
 	// Build actions array
@@ -178,7 +179,8 @@ func (n *DBusNotifier) Notify(summary, body, icon, actionURL string) (uint32, er
 
 	// Call the Notify method
 	// Signature: Notify(app_name, replaces_id, app_icon, summary, body, actions, hints, expire_timeout) -> notification_id
-	call := obj.Call(
+	call := obj.CallWithContext(
+		ctx,
 		dbusInterface+".Notify",
 		0,
 		n.appName, // app_name

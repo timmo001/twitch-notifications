@@ -69,9 +69,6 @@ func RetryWithResult[T any](ctx context.Context, fn func() (T, error), opts Retr
 		// Check context before each attempt
 		select {
 		case <-ctx.Done():
-			if lastErr != nil {
-				return zero, lastErr
-			}
 			return zero, ctx.Err()
 		default:
 		}
@@ -98,7 +95,7 @@ func RetryWithResult[T any](ctx context.Context, fn func() (T, error), opts Retr
 
 		select {
 		case <-ctx.Done():
-			return zero, lastErr
+			return zero, ctx.Err()
 		case <-time.After(delay):
 			// Continue to next attempt
 		}
@@ -111,12 +108,14 @@ func RetryWithResult[T any](ctx context.Context, fn func() (T, error), opts Retr
 // attempt is 1-based (first attempt = 1).
 // This is exported so it can be reused by other packages (e.g., EventSub reconnection).
 func CalculateBackoff(attempt int, opts RetryOptions) time.Duration {
-	// Exponential backoff: baseDelay * 2^(attempt-1)
-	delay := opts.BaseDelay * time.Duration(1<<uint(attempt-1))
-
-	// Cap at max delay
-	if delay > opts.MaxDelay {
-		delay = opts.MaxDelay
+	// Saturate before multiplying so long outages cannot overflow the delay.
+	delay := opts.BaseDelay
+	for i := 1; i < attempt && delay < opts.MaxDelay; i++ {
+		if delay > opts.MaxDelay/2 {
+			delay = opts.MaxDelay
+			break
+		}
+		delay *= 2
 	}
 
 	// Apply jitter (±jitter%)
@@ -129,6 +128,9 @@ func CalculateBackoff(attempt int, opts RetryOptions) time.Duration {
 	// Ensure delay is at least baseDelay
 	if delay < opts.BaseDelay {
 		delay = opts.BaseDelay
+	}
+	if delay > opts.MaxDelay {
+		delay = opts.MaxDelay
 	}
 
 	return delay

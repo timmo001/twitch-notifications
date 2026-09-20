@@ -36,7 +36,6 @@ const (
 	// Startup timing
 	systrayInitDelay         = 200 * time.Millisecond // Wait for systray to initialize
 	subscriptionProcessDelay = 500 * time.Millisecond // Wait for subscriptions to process
-	sessionEstablishTimeout  = 5 * time.Second        // Wait for EventSub session
 
 	// Background task intervals
 	healthCheckInterval  = 1 * time.Minute // Periodic health check (also refreshes tokens)
@@ -186,17 +185,14 @@ func getDefaultConfigPath() string {
 
 // createTokenPersistenceCallback creates a callback that persists tokens to the config file
 // This is used to save tokens whenever they're refreshed by the TokenManager.
-// Note: Tokens are kept in memory during runtime, so persistence failure only affects restarts.
 func createTokenPersistenceCallback(configPath string) auth.TokenRefreshCallback {
-	return func(accessToken, refreshToken string) {
+	return func(accessToken, refreshToken string) error {
 		log.Println("Token refreshed, persisting to config file...")
 		if err := config.SaveTokens(configPath, accessToken, refreshToken); err != nil {
-			// Tokens still work in memory, but restart will need re-auth
-			log.Printf("Warning: Failed to save tokens to config file: %v", err)
-			log.Printf("Warning: If the application restarts, you will need to re-authenticate.")
-		} else {
-			log.Println("Tokens persisted successfully")
+			return err
 		}
+		log.Println("Tokens persisted successfully")
+		return nil
 	}
 }
 
@@ -592,7 +588,7 @@ func main() {
 	// Create notifier early for fatal error notifications
 	// The openURL function is used when a notification is clicked
 	browserOpenerEarly := utils.NewOpener()
-	earlyNotifier, err := notify.NewNotifier(appName, cfg.SoundFile, browserOpenerEarly.OpenURL)
+	earlyNotifier, err := notify.NewNotifier(ctx, appName, cfg.SoundFile, browserOpenerEarly.OpenURL)
 	if err != nil {
 		log.Printf("Warning: Failed to create early notifier: %v", err)
 	} else {
@@ -611,13 +607,14 @@ func main() {
 	// Run all initialization in a goroutine so it doesn't block the main thread
 	// This is important on Linux where systray needs the main thread for GTK
 	initError := make(chan error, 1)
-	var eventSubClient *twitch.EventSubClient
+	notifierDone := make(chan struct{})
 
 	// Channel to signal that the application should restart due to a crash
 	crashRestart := make(chan struct{}, 1)
 
 	// Start notifier in background - it will run until context is cancelled
 	go func() {
+		defer close(notifierDone)
 		// Recover from panics in runNotifier and trigger a restart
 		defer func() {
 			if r := recover(); r != nil {
@@ -629,12 +626,7 @@ func main() {
 			}
 		}()
 
-		if err := runNotifier(ctx, cfg, *configPath, *silent, *openBrowser, &eventSubClient); err != nil {
-			select {
-			case initError <- err:
-			default:
-			}
-		}
+		initError <- runNotifier(ctx, cfg, *configPath, *silent, *openBrowser)
 	}()
 
 	// Wait for shutdown signal, initialization error, or crash restart
@@ -642,10 +634,10 @@ func main() {
 	case sig := <-sigChan:
 		log.Printf("Received signal: %v, shutting down...", sig)
 	case err := <-initError:
-		log.Printf("Initialization failed: %v — restarting...", err)
-		// Initialization failures may be transient (network issues, API errors, etc.)
-		// so restart silently instead of exiting fatally
-		restartRequested.Store(true)
+		if err != nil {
+			log.Printf("Initialisation failed: %v, restarting...", err)
+			restartRequested.Store(true)
+		}
 	case <-crashRestart:
 		log.Println("Crash detected, restarting...")
 		restartRequested.Store(true)
@@ -656,12 +648,7 @@ func main() {
 	// Cancel context to stop all goroutines
 	cancel()
 
-	// Close EventSub client (this will close WebSocket and wait for goroutines)
-	if eventSubClient != nil {
-		if err := eventSubClient.Close(); err != nil {
-			log.Printf("Error closing EventSub client: %v", err)
-		}
-	}
+	<-notifierDone
 
 	// Close global notifier
 	utils.CloseGlobalNotifier()
@@ -681,8 +668,7 @@ func main() {
 	log.Println("Shutdown complete")
 }
 
-// isAuthError checks if an error indicates an authentication failure (401 status code)
-// It handles both typed APIError from the twitch package and string-based errors from auth package
+// isAuthError recognises API authentication failures and invalid refresh tokens.
 func isAuthError(err error) bool {
 	if err == nil {
 		return false
@@ -694,14 +680,8 @@ func isAuthError(err error) bool {
 		return apiErr.IsAuthError()
 	}
 
-	// Fallback for auth package errors that use string formatting
-	// This handles "token refresh failed (status 401)" pattern from RefreshAccessToken
-	errStr := err.Error()
-	if strings.Contains(errStr, "token refresh failed (status 401)") {
-		return true
-	}
-
-	return false
+	var oauthErr *auth.OAuthError
+	return errors.As(err, &oauthErr) && oauthErr.IsAuthError()
 }
 
 // AuthRetryResult contains the result of a successful OAuth retry
@@ -838,23 +818,8 @@ func (app *Application) UpdateHelixClientToken(token string) {
 }
 
 // shouldTriggerOAuthRetry determines if an error warrants OAuth retry
-// It checks for typed auth errors and specific error messages that indicate auth failure
 func shouldTriggerOAuthRetry(err error) bool {
-	if isAuthError(err) {
-		return true
-	}
-
-	errStr := err.Error()
-	// "no valid access token and no refresh token available" means we need fresh OAuth
-	if strings.Contains(errStr, "no valid access token") {
-		return true
-	}
-	// "failed to refresh token" with auth-related details
-	if strings.Contains(errStr, "failed to refresh token") && isAuthError(err) {
-		return true
-	}
-
-	return false
+	return isAuthError(err) || errors.Is(err, auth.ErrMissingToken)
 }
 
 // handleAuthErrorWithRetry attempts OAuth retry if the error warrants it.
@@ -888,13 +853,28 @@ func handleAuthErrorWithRetry(ctx context.Context, configPath string, notifier *
 
 // runNotifier runs the notifier initialization and main loop in a goroutine
 // silentStartup suppresses startup and initial monitoring notifications (e.g. after periodic restart)
-func runNotifier(ctx context.Context, cfg *config.Config, configPath string, silentStartup bool, openOnStartup bool, eventSubClient **twitch.EventSubClient) error {
+func runNotifier(ctx context.Context, cfg *config.Config, configPath string, silentStartup bool, openOnStartup bool) error {
+	ctx, cancel := context.WithCancel(ctx)
+	var workers sync.WaitGroup
+	var eventSubClient *twitch.EventSubClient
+	var poller *twitch.Poller
+	defer func() {
+		cancel()
+		if eventSubClient != nil {
+			eventSubClient.Close()
+		}
+		if poller != nil {
+			poller.Stop()
+		}
+		workers.Wait()
+	}()
+
 	// Initialize notifier early for auth notifications
 	var notifier *notify.Notifier
 	var err error
 
 	browserOpener := utils.NewOpener()
-	notifier, err = notify.NewNotifier(appName, cfg.SoundFile, browserOpener.OpenURL)
+	notifier, err = notify.NewNotifier(ctx, appName, cfg.SoundFile, browserOpener.OpenURL)
 	if err != nil {
 		return fmt.Errorf("failed to create notifier: %w", err)
 	}
@@ -1047,10 +1027,10 @@ func runNotifier(ctx context.Context, cfg *config.Config, configPath string, sil
 	}
 
 	// Initialize poller for overflow channels (channels beyond EventSub limit)
-	var poller *twitch.Poller
 	if len(polledChannels) > 0 {
 		pollInterval := time.Duration(app.Config().GetPollInterval()) * time.Second
 		poller = twitch.NewPoller(app.HelixClient(), polledChannels, pollInterval, onStreamOnline)
+		poller.Start(ctx)
 	}
 
 	refreshLiveStatus := func() {
@@ -1111,98 +1091,71 @@ func runNotifier(ctx context.Context, cfg *config.Config, configPath string, sil
 		liveStreamMu.Unlock()
 	}
 
-	// Track if we've done initial subscription
-	var initialSubscriptionDone bool
-	var initialSubMu sync.Mutex
-
 	// Track if we've done initial live stream check (only on first startup)
 	var initialLiveCheckDone bool
 	var initialLiveCheckMu sync.Mutex
 
 	// Setup session ready handler for resubscriptions
-	onSessionReady := func(sessionID string) {
-		initialSubMu.Lock()
-		isInitial := !initialSubscriptionDone
-		initialSubMu.Unlock()
+	onSessionReady := func(sessionCtx context.Context, sessionID string) {
+		// A fresh session needs every configured subscription, including any that
+		// failed in an earlier session. Twitch transfers subscriptions on handover.
+		subscribeBatch(sessionCtx, app.HelixClient(), sessionID, eventSubChannels)
+		if sessionCtx.Err() != nil {
+			return
+		}
+		// After initial subscription, check for channels that are already live (only on first startup)
+		initialLiveCheckMu.Lock()
+		shouldCheckLive := !initialLiveCheckDone
+		if shouldCheckLive {
+			initialLiveCheckDone = true
+		}
+		initialLiveCheckMu.Unlock()
 
-		if isInitial {
-			// First time - do initial subscription (only for EventSub channels, not polled ones)
-			log.Printf("EventSub session ready, subscribing to %d channels...", len(eventSubChannels))
-			initialSubMu.Lock()
-			initialSubscriptionDone = true
-			initialSubMu.Unlock()
-			subscribeWithRateLimit(ctx, helixClient, *eventSubClient, sessionID, nil, eventSubChannels, false)
+		if shouldCheckLive {
+			// Use a goroutine with a small delay to ensure all subscriptions are marked
+			workers.Add(1)
+			utils.GoWithRecovery("initial-live-check", func() {
+				defer workers.Done()
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(subscriptionProcessDelay):
+				}
 
-			// Start the poller for overflow channels after EventSub setup
-			if poller != nil {
-				poller.Start(ctx)
-			}
+				opts := RecheckOptions{
+					OpenBrowser:       openOnStartup,
+					BrowserOpener:     app.browserOpener,
+					Config:            app.Config(),
+					NotifyIfNoStreams: false,         // Handle "no streams" after checking all channel types
+					Silent:            silentStartup, // Suppress all notifications during silent restart
+				}
 
-			// After initial subscription, check for channels that are already live (only on first startup)
-			initialLiveCheckMu.Lock()
-			shouldCheckLive := !initialLiveCheckDone
-			if shouldCheckLive {
-				initialLiveCheckDone = true
-			}
-			initialLiveCheckMu.Unlock()
+				eventSubLive := checkAndNotifyLiveStreams(ctx, helixClient, eventSubChannels, notifier, opts)
 
-			if shouldCheckLive {
-				// Use a goroutine with a small delay to ensure all subscriptions are marked
-				utils.GoWithRecovery("initial-live-check", func() {
-					time.Sleep(subscriptionProcessDelay) // Brief delay to ensure subscriptions are fully processed
+				polledLive := false
+				if poller != nil {
+					polledLive = checkAndNotifyPolledStreams(ctx, poller, notifier, opts)
+				}
 
-					opts := RecheckOptions{
-						OpenBrowser:       openOnStartup,
-						BrowserOpener:     app.browserOpener,
-						Config:            app.Config(),
-						NotifyIfNoStreams: false,         // Handle "no streams" after checking all channel types
-						Silent:            silentStartup, // Suppress all notifications during silent restart
+				if !silentStartup && !eventSubLive && !polledLive {
+					if err := notifier.NotifyNoStreamsLive(); err != nil {
+						log.Printf("Failed to send no streams live notification: %v", err)
 					}
+				}
 
-					eventSubLive := checkAndNotifyLiveStreams(ctx, helixClient, eventSubChannels, notifier, opts)
-
-					polledLive := false
-					if poller != nil {
-						polledLive = checkAndNotifyPolledStreams(ctx, poller, notifier, opts)
-					}
-
-					if !silentStartup && !eventSubLive && !polledLive {
-						if err := notifier.NotifyNoStreamsLive(); err != nil {
-							log.Printf("Failed to send no streams live notification: %v", err)
-						}
-					}
-
-					refreshLiveStatus()
-					tray.RefreshStatus()
-				})
-			}
-		} else {
-			// Reconnection - resubscribe to existing subscriptions
-			log.Printf("EventSub session ready, resubscribing to channels...")
-			subscribedChannels := (*eventSubClient).GetSubscribedChannels()
-			if len(subscribedChannels) > 0 {
-				subscribeWithRateLimit(ctx, helixClient, *eventSubClient, sessionID, subscribedChannels, eventSubChannels, true)
-			}
+				refreshLiveStatus()
+				tray.RefreshStatus()
+			})
 		}
 	}
 
 	// Initialize EventSub client
-	*eventSubClient = twitch.NewEventSubClient(cfg.Twitch.ClientID, accessToken, onStreamOnline, onSessionReady)
+	eventSubClient = twitch.NewEventSubClient(ctx, onStreamOnline, onSessionReady)
 
 	// Connect to EventSub
 	log.Println("Connecting to Twitch EventSub...")
-	if err := (*eventSubClient).Connect(); err != nil {
+	if err := eventSubClient.Connect(); err != nil {
 		return fmt.Errorf("failed to connect to EventSub: %w", err)
-	}
-
-	// Wait for session to be established and initial subscription to complete
-	// The onSessionReady callback will handle the initial subscription
-	time.Sleep(sessionEstablishTimeout)
-
-	// Check if we got a session ID (onSessionReady should have been called)
-	sessionID := (*eventSubClient).GetSessionID()
-	if sessionID == "" {
-		return fmt.Errorf("failed to get EventSub session ID")
 	}
 
 	log.Println("Twitch Notifier is running. Press Ctrl+C to stop.")
@@ -1405,7 +1358,9 @@ func runNotifier(ctx context.Context, cfg *config.Config, configPath string, sil
 	refreshLiveStatus()
 	tray.RefreshStatus()
 
+	workers.Add(1)
 	utils.GoWithRecovery("live-status-refresh", func() {
+		defer workers.Done()
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
 
@@ -1425,7 +1380,7 @@ func runNotifier(ctx context.Context, cfg *config.Config, configPath string, sil
 		log.Println("Running health check...")
 
 		// Check if EventSub connection is still alive
-		sessionID := (*eventSubClient).GetSessionID()
+		sessionID := eventSubClient.GetSessionID()
 		connectionHealthy := sessionID != ""
 		if !connectionHealthy {
 			log.Printf("Warning: EventSub session ID is empty, connection may be dead")
@@ -1445,12 +1400,10 @@ func runNotifier(ctx context.Context, cfg *config.Config, configPath string, sil
 				log.Printf("Health check: OAuth retry failed: %v", retryErr)
 			} else if result != nil {
 				app.UpdateFromAuthRetry(result)
-				(*eventSubClient).UpdateAccessToken(result.AccessToken)
 			}
 		} else {
 			// Token obtained, update clients
 			app.UpdateHelixClientToken(newToken)
-			(*eventSubClient).UpdateAccessToken(newToken)
 
 			// Make actual API call to verify token works
 			_, apiErr := app.HelixClient().GetUserID(ctx)
@@ -1461,7 +1414,6 @@ func runNotifier(ctx context.Context, cfg *config.Config, configPath string, sil
 					log.Printf("Health check: OAuth retry failed: %v", retryErr)
 				} else if result != nil {
 					app.UpdateFromAuthRetry(result)
-					(*eventSubClient).UpdateAccessToken(result.AccessToken)
 				}
 			} else {
 				log.Println("Health check: API call successful, token is valid")
@@ -1474,7 +1426,9 @@ func runNotifier(ctx context.Context, cfg *config.Config, configPath string, sil
 	// Run periodic application health check in background
 	// This ensures the app stays running, connection is healthy, and token is refreshed
 	// Runs every minute to ensure tokens remain valid
+	workers.Add(1)
 	utils.GoWithRecovery("health-check", func() {
+		defer workers.Done()
 		ticker := time.NewTicker(healthCheckInterval)
 		defer ticker.Stop()
 
@@ -1491,7 +1445,9 @@ func runNotifier(ctx context.Context, cfg *config.Config, configPath string, sil
 	// Periodic restart: after 1 hour, trigger a graceful shutdown and re-exec the process
 	// This helps recover from any accumulated state issues over long uptimes
 	if app.Config().ShouldPeriodicRestart() {
+		workers.Add(1)
 		utils.GoWithRecovery("periodic-restart", func() {
+			defer workers.Done()
 			timer := time.NewTimer(periodicRestartDelay)
 			defer timer.Stop()
 
@@ -1629,33 +1585,8 @@ func notifyAndOpenStream(notifier *notify.Notifier, stream StreamInfo, opts Rech
 	}
 }
 
-// subscribeWithRateLimit subscribes to channels with rate limiting
-func subscribeWithRateLimit(ctx context.Context, helixClient *twitch.HelixClient, eventSubClient *twitch.EventSubClient, sessionID string, existingSubs []string, allChannels []twitch.Channel, isResubscribe bool) {
-	channelsToSubscribe := allChannels
-
-	// If resubscribing, only resubscribe to already subscribed channels
-	if isResubscribe {
-		existingMap := make(map[string]bool)
-		for _, id := range existingSubs {
-			existingMap[id] = true
-		}
-
-		var filtered []twitch.Channel
-		for _, ch := range allChannels {
-			if existingMap[ch.ID] {
-				filtered = append(filtered, ch)
-			}
-		}
-		channelsToSubscribe = filtered
-	}
-
-	// Subscribe to all watched channels
-	log.Printf("Subscribing to %d watched channels...", len(channelsToSubscribe))
-	subscribeBatch(ctx, helixClient, eventSubClient, sessionID, channelsToSubscribe)
-}
-
 // subscribeBatch subscribes to a batch of channels with appropriate rate limiting
-func subscribeBatch(ctx context.Context, helixClient *twitch.HelixClient, eventSubClient *twitch.EventSubClient, sessionID string, channels []twitch.Channel) {
+func subscribeBatch(ctx context.Context, helixClient *twitch.HelixClient, sessionID string, channels []twitch.Channel) {
 	baseDelay := baseSubscriptionDelay
 
 	log.Printf("Starting subscription batch: %d channels", len(channels))
@@ -1747,7 +1678,6 @@ func subscribeBatch(ctx context.Context, helixClient *twitch.HelixClient, eventS
 				// Continue to next channel on non-429 errors
 			}
 		} else {
-			eventSubClient.MarkSubscribed(channel.ID)
 			successCount++
 			log.Printf("✓ Subscribed to: %s", channel.Username)
 

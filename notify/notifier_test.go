@@ -1,9 +1,20 @@
 package notify
 
 import (
+	"context"
+	"errors"
 	"reflect"
 	"testing"
 )
+
+func TestNotificationStopsOnShutdown(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	notifier := &Notifier{ctx: ctx, omarchyPath: "/unused"}
+	if err := notifier.NotifyStreamOnline(StreamOnlineNotification{ChannelName: "channel"}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("notification after shutdown = %v, want cancellation", err)
+	}
+}
 
 func TestOmarchyNotificationArgs(t *testing.T) {
 	t.Setenv("OMARCHY_HOST", "laptop")

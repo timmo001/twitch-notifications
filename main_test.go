@@ -1,12 +1,45 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 
+	"twitch-notifications/auth"
 	"twitch-notifications/config"
 	"twitch-notifications/twitch"
 )
+
+func TestOAuthRetryUsesTypedFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"no error", nil, false},
+		{"missing tokens", auth.ErrMissingToken, true},
+		{"API unauthorised", &twitch.APIError{StatusCode: 401}, true},
+		{"OAuth unauthorised", &auth.OAuthError{StatusCode: 401}, true},
+		{"expired refresh", &auth.OAuthError{StatusCode: 400, InvalidRefreshToken: true}, true},
+		{"invalid client", &auth.OAuthError{StatusCode: 400}, false},
+		{"server failure", &auth.OAuthError{StatusCode: 503}, false},
+		{"cancelled", context.Canceled, false},
+		{"misleading text", errors.New("no valid access token: token refresh failed (status 401)"), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shouldTriggerOAuthRetry(tc.err); got != tc.want {
+				t.Fatalf("shouldTriggerOAuthRetry() = %t, want %t", got, tc.want)
+			}
+			if tc.err != nil {
+				if got := shouldTriggerOAuthRetry(fmt.Errorf("wrapped: %w", tc.err)); got != tc.want {
+					t.Fatalf("wrapped error classification = %t, want %t", got, tc.want)
+				}
+			}
+		})
+	}
+}
 
 func boolPointer(value bool) *bool {
 	return &value
