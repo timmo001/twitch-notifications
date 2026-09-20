@@ -103,3 +103,67 @@ func TestHideTrayDuringTokenRefresh(t *testing.T) {
 		t.Fatal("concurrent saves lost the tray setting or refreshed tokens")
 	}
 }
+
+func TestTokenSaveAtomicallyReplacesSymlinkTarget(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "stored.yaml")
+	path := filepath.Join(dir, "config.yaml")
+	original := "twitch:\n  access_token: old-access\n  refresh_token: old-refresh\n"
+	if err := os.WriteFile(target, []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, path); err != nil {
+		t.Fatal(err)
+	}
+	oldFile, err := os.Open(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer oldFile.Close()
+	if err := SaveTokens(path, "new-access", "new-refresh"); err != nil {
+		t.Fatal(err)
+	}
+	oldData := make([]byte, len(original))
+	if _, err := oldFile.Read(oldData); err != nil || string(oldData) != original {
+		t.Fatalf("save modified the old file in place: %q, %v", oldData, err)
+	}
+	info, err := os.Lstat(path)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("save replaced the symlink: %v", err)
+	}
+	info, err = os.Stat(target)
+	if err != nil || info.Mode().Perm() != 0600 {
+		t.Fatalf("token file is not private: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil || cfg.Twitch.AccessToken != "new-access" || cfg.Twitch.RefreshToken != "new-refresh" {
+		t.Fatalf("new token data not available: %v", err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".") {
+			t.Errorf("temporary file left behind: %s", entry.Name())
+		}
+	}
+}
+
+func TestAtomicWriteFailurePreservesDestination(t *testing.T) {
+	dir := t.TempDir()
+	destination := filepath.Join(dir, "config.yaml")
+	if err := os.Mkdir(destination, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFileAtomic(destination, []byte("tokens"), 0600); err == nil {
+		t.Fatal("replacing a directory succeeded")
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "config.yaml" || !entries[0].IsDir() {
+		t.Fatal("failed save changed the destination or left temporary files")
+	}
+}

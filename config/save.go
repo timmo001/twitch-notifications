@@ -55,7 +55,7 @@ func writeConfigFile(configPath string, cfg *Config) error {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 
-	if err := os.WriteFile(configPath, data, 0600); err != nil {
+	if err := writeFileAtomic(configPath, data, 0600); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
 
@@ -74,7 +74,7 @@ func writeChannelsFile(channelsPath string, watchedChannels []WatchedChannel) er
 	}
 	data = append([]byte("---\n"), data...)
 
-	if err := os.WriteFile(channelsPath, data, 0644); err != nil {
+	if err := writeFileAtomic(channelsPath, data, 0644); err != nil {
 		return fmt.Errorf("failed to write channels file: %w", err)
 	}
 
@@ -146,10 +146,50 @@ func SaveSystemTray(configPath string, enabled bool) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
-	if err := os.WriteFile(configPath, data, 0600); err != nil {
+	if err := writeFileAtomic(configPath, data, 0600); err != nil {
 		return fmt.Errorf("failed to write config: %w", err)
 	}
 	return nil
+}
+
+// writeFileAtomic keeps the previous file intact until the replacement is ready.
+func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
+	// Preserve symlink-based configuration layouts by replacing their target.
+	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		path, err = filepath.EvalSymlinks(path)
+		if err != nil {
+			return err
+		}
+	} else if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	dir, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	file, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(file.Name())
+	defer file.Close()
+	if err := file.Chmod(mode); err != nil {
+		return err
+	}
+	if _, err := file.Write(data); err != nil {
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(file.Name(), path); err != nil {
+		return err
+	}
+	return dir.Sync()
 }
 
 // UpdateTokens updates the access token and refresh token in the config
