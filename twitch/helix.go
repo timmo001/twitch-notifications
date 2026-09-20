@@ -15,7 +15,7 @@ import (
 
 	"twitch-notifications/utils"
 
-	"github.com/nicklaw5/helix"
+	"github.com/nicklaw5/helix/v2"
 )
 
 const (
@@ -48,40 +48,47 @@ type RateLimitResponse struct {
 
 // HelixClient wraps the helix API client
 type HelixClient struct {
-	client      *helix.Client
 	clientID    string
 	accessToken string
+	tokenMu     sync.RWMutex
+	httpClient  *http.Client
 	rateLimitMu sync.RWMutex
 	rateLimit   *RateLimitInfo // Track latest rate limit state
 }
 
 // NewHelixClient creates a new Helix API client
 func NewHelixClient(clientID, accessToken string) (*HelixClient, error) {
-	client, err := helix.NewClient(&helix.Options{
-		ClientID:        clientID,
-		UserAccessToken: accessToken,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create helix client: %w", err)
+	if clientID == "" {
+		return nil, fmt.Errorf("Twitch client ID is required")
 	}
 
 	return &HelixClient{
-		client:      client,
 		clientID:    clientID,
 		accessToken: accessToken,
+		httpClient:  &http.Client{Timeout: utils.HTTPClientTimeout},
 	}, nil
 }
 
 // UpdateAccessToken updates the access token for the client
 func (hc *HelixClient) UpdateAccessToken(accessToken string) {
-	hc.client.SetUserAccessToken(accessToken)
+	hc.tokenMu.Lock()
+	defer hc.tokenMu.Unlock()
 	hc.accessToken = accessToken
+}
+
+func (hc *HelixClient) getAccessToken() string {
+	hc.tokenMu.RLock()
+	defer hc.tokenMu.RUnlock()
+	return hc.accessToken
 }
 
 // GetUserID fetches the user ID for the authenticated user
 // Uses the latest Get Users endpoint
 func (hc *HelixClient) GetUserID(ctx context.Context) (string, error) {
-	resp, err := hc.client.GetUsers(&helix.UsersParams{})
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	resp, err := hc.getUsers(ctx, &helix.UsersParams{})
 	if err != nil {
 		return "", fmt.Errorf("failed to get user info: %w", err)
 	}
@@ -95,6 +102,25 @@ func (hc *HelixClient) GetUserID(ctx context.Context) (string, error) {
 	}
 
 	return resp.Data.Users[0].ID, nil
+}
+
+func (hc *HelixClient) getUsers(ctx context.Context, params *helix.UsersParams) (*helix.UsersResponse, error) {
+	// Each request owns its context and token snapshot. The HTTP client is shared
+	// for connection reuse, while SDK state is never mutated by another request.
+	client, err := helix.NewClientWithContext(ctx, &helix.Options{
+		ClientID:        hc.clientID,
+		UserAccessToken: hc.getAccessToken(),
+		HTTPClient:      hc.httpClient,
+	})
+	if err != nil {
+		return nil, err
+	}
+	response, err := client.GetUsers(params)
+	if err != nil && ctx.Err() != nil {
+		// The SDK formats transport errors without preserving their cause.
+		return nil, ctx.Err()
+	}
+	return response, err
 }
 
 // Channel represents a Twitch channel
@@ -115,6 +141,9 @@ func (hc *HelixClient) GetChannelsByUsernames(ctx context.Context, usernames []s
 	channelMap := make(map[string]Channel)
 
 	for i := 0; i < len(usernames); i += maxPerRequest {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		end := i + maxPerRequest
 		if end > len(usernames) {
 			end = len(usernames)
@@ -127,7 +156,7 @@ func (hc *HelixClient) GetChannelsByUsernames(ctx context.Context, usernames []s
 			params.Logins = append(params.Logins, username)
 		}
 
-		resp, err := hc.client.GetUsers(params)
+		resp, err := hc.getUsers(ctx, params)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get users: %w", err)
 		}
@@ -146,7 +175,11 @@ func (hc *HelixClient) GetChannelsByUsernames(ctx context.Context, usernames []s
 
 		// Rate limit: wait between batches (increased delay to avoid rate limits)
 		if end < len(usernames) {
-			time.Sleep(batchRequestDelay)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(batchRequestDelay):
+			}
 		}
 	}
 
@@ -423,10 +456,9 @@ func (hc *HelixClient) CreateEventSubSubscription(ctx context.Context, sessionID
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Client-ID", hc.clientID)
-	req.Header.Set("Authorization", "Bearer "+hc.accessToken)
+	req.Header.Set("Authorization", "Bearer "+hc.getAccessToken())
 
-	client := &http.Client{Timeout: utils.HTTPClientTimeout}
-	resp, err := client.Do(req)
+	resp, err := hc.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
@@ -490,9 +522,9 @@ func (hc *HelixClient) GetFollowedLiveStreams(ctx context.Context, userID string
 			return nil, fmt.Errorf("failed to create followed streams request: %w", err)
 		}
 		req.Header.Set("Client-ID", hc.clientID)
-		req.Header.Set("Authorization", "Bearer "+hc.accessToken)
+		req.Header.Set("Authorization", "Bearer "+hc.getAccessToken())
 
-		resp, err := (&http.Client{Timeout: utils.HTTPClientTimeout}).Do(req)
+		resp, err := hc.httpClient.Do(req)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get followed streams: %w", err)
 		}
@@ -580,10 +612,9 @@ func (hc *HelixClient) GetLiveStreams(ctx context.Context, channelIDs []string) 
 		}
 
 		req.Header.Set("Client-ID", hc.clientID)
-		req.Header.Set("Authorization", "Bearer "+hc.accessToken)
+		req.Header.Set("Authorization", "Bearer "+hc.getAccessToken())
 
-		client := &http.Client{Timeout: utils.HTTPClientTimeout}
-		resp, err := client.Do(req)
+		resp, err := hc.httpClient.Do(req)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get live streams: %w", err)
 		}
