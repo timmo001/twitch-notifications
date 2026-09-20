@@ -406,6 +406,22 @@ Poller started for 5 overflow channels (polling every 1m0s)
 
 The application automatically refreshes access tokens if a refresh token is available. For long-running daemons, ensure you have a refresh token configured.
 
+Refresh requests are serialised. New tokens are validated before use and saved
+by atomically replacing the config file. If saving fails, the next token request
+retries the save using the tokens already held in memory.
+
+## Development Checks
+
+Run the linters, race-enabled tests and known-vulnerability scan:
+
+```bash
+mise run check
+```
+
+The tests use local HTTP and WebSocket servers for token refresh, disconnect
+recovery, connection handover and cancellation. They do not require Twitch
+credentials. CI runs these checks for pushes and pull requests.
+
 ## License
 
 Licensed under the Apache License 2.0. See [LICENSE](LICENSE).

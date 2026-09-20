@@ -29,3 +29,6 @@ jobs:
 
       - name: Lint application
         run: mise run lint:all
+
+      - name: Scan for known vulnerabilities
+        run: mise run audit

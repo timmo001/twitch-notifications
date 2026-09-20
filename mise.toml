@@ -70,8 +70,12 @@ description = "Stop development and restore the packaged daemon and installed pa
 run = "pitchfork stop panel backend && omarchy restart shell"
 
 [tasks.test]
-description = "Run Go tests"
-run = "go test -v ./..."
+description = "Run Go tests with race detection"
+run = "go test -race -v ./..."
+
+[tasks.audit]
+description = "Scan for known Go vulnerabilities"
+run = "go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./..."
 
 [tasks."lint:go"]
 description = "Check Go formatting and run go vet"
@@ -89,8 +93,8 @@ description = "Run all linters"
 depends = ["lint:go"]
 
 [tasks.check]
-description = "Run all linters and tests"
-depends = ["lint:all", "test"]
+description = "Run linters, race-enabled tests and vulnerability scanning"
+depends = ["lint:all", "test", "audit"]
 
 [tasks.clean]
 description = "Remove build artefacts"
