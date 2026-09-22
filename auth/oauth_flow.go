@@ -3,8 +3,10 @@ package auth
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
 	"fmt"
+	"net"
 	"net/http"
 	"time"
 
@@ -54,21 +56,27 @@ func (of *OAuthFlow) Run(ctx context.Context, isAutomatic bool) (*TokenManager, 
 	// Create channel to receive authorization code
 	codeChan := make(chan string, 1)
 	errorChan := make(chan error, 1)
+	// Only the first result counts; later callbacks must not block their handlers.
+	sendError := func(err error) {
+		select {
+		case errorChan <- err:
+		default:
+		}
+	}
 
 	// Start local HTTP server for callback
 	mux := http.NewServeMux()
 	server := &http.Server{
-		Addr:    ":" + of.Port,
-		Handler: mux,
+		Handler:           mux,
+		ReadHeaderTimeout: oauthServerShutdownTimeout,
 	}
 
 	// Handle OAuth callback
 	mux.HandleFunc("/oauth/callback", func(w http.ResponseWriter, r *http.Request) {
-		// Verify state
+		// Twitch says to ignore any response whose state doesn't match ours.
 		returnedState := r.URL.Query().Get("state")
-		if returnedState != state {
+		if subtle.ConstantTimeCompare([]byte(returnedState), []byte(state)) != 1 {
 			http.Error(w, "Invalid state parameter", http.StatusBadRequest)
-			errorChan <- fmt.Errorf("invalid state parameter")
 			return
 		}
 
@@ -76,7 +84,7 @@ func (of *OAuthFlow) Run(ctx context.Context, isAutomatic bool) (*TokenManager, 
 		if errMsg := r.URL.Query().Get("error"); errMsg != "" {
 			errorDesc := r.URL.Query().Get("error_description")
 			http.Error(w, fmt.Sprintf("OAuth error: %s - %s", errMsg, errorDesc), http.StatusBadRequest)
-			errorChan <- fmt.Errorf("OAuth error: %s - %s", errMsg, errorDesc)
+			sendError(fmt.Errorf("OAuth error: %s - %s", errMsg, errorDesc))
 			return
 		}
 
@@ -84,7 +92,7 @@ func (of *OAuthFlow) Run(ctx context.Context, isAutomatic bool) (*TokenManager, 
 		code := r.URL.Query().Get("code")
 		if code == "" {
 			http.Error(w, "No authorization code received", http.StatusBadRequest)
-			errorChan <- fmt.Errorf("no authorization code received")
+			sendError(fmt.Errorf("no authorization code received"))
 			return
 		}
 
@@ -104,15 +112,25 @@ func (of *OAuthFlow) Run(ctx context.Context, isAutomatic bool) (*TokenManager, 
 			</html>
 		`)
 
-		codeChan <- code
+		select {
+		case codeChan <- code:
+		default:
+		}
 	})
 
-	// Start server in goroutine
-	go func() {
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			errorChan <- fmt.Errorf("failed to start callback server: %w", err)
-		}
-	}()
+	// The redirect URI uses localhost, which may resolve to either loopback
+	// address. Listen only on loopback so other machines cannot reach it.
+	listeners, err := listenLoopback(of.Port)
+	if err != nil {
+		return nil, fmt.Errorf("failed to start callback server: %w", err)
+	}
+	for _, listener := range listeners {
+		go func() {
+			if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
+				sendError(fmt.Errorf("callback server failed: %w", err))
+			}
+		}()
+	}
 
 	// Ensure server is closed when done
 	defer func() {
@@ -169,6 +187,20 @@ func (of *OAuthFlow) Run(ctx context.Context, isAutomatic bool) (*TokenManager, 
 	case <-time.After(oauthFlowTimeout):
 		return nil, fmt.Errorf("authorization timeout - please try again")
 	}
+}
+
+// listenLoopback binds the callback port on IPv4 loopback, plus IPv6 loopback
+// when the machine has it.
+func listenLoopback(port string) ([]net.Listener, error) {
+	ipv4, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", port))
+	if err != nil {
+		return nil, err
+	}
+	listeners := []net.Listener{ipv4}
+	if ipv6, err := net.Listen("tcp", net.JoinHostPort("::1", port)); err == nil {
+		listeners = append(listeners, ipv6)
+	}
+	return listeners, nil
 }
 
 // generateState generates a random state string for CSRF protection
