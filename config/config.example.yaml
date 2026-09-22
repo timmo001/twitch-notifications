@@ -15,12 +15,6 @@ system_tray: true
 # Default is 60 seconds. Lower values = more responsive but more API calls
 poll_interval: 60
 
-# Periodically restart the application every hour to keep it healthy
-# This helps recover from any accumulated state issues over long uptimes
-# Requires a process manager (e.g. systemd with Restart=always) to restart the app
-# Default is true
-periodic_restart: true
-
 # Optional: Path to a sound file to play with notifications
 # Supports common audio formats (WAV, OGG, MP3, etc.)
 # Can use ~ for home directory or environment variables like ${HOME}

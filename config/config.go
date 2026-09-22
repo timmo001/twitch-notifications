@@ -95,10 +95,9 @@ func (wc WatchedChannel) MarshalYAML() (interface{}, error) {
 type Config struct {
 	WatchedChannels []WatchedChannel `yaml:"watched_channels"`
 	NotifyOnStartup bool             `yaml:"notify_on_startup"`
-	SoundFile       string           `yaml:"sound_file"`       // Optional path to sound file to play with notifications
-	PollInterval    int              `yaml:"poll_interval"`    // Polling interval in seconds for overflow channels (default: 60)
-	PeriodicRestart *bool            `yaml:"periodic_restart"` // Restart the application every hour (default: true)
-	SystemTray      *bool            `yaml:"system_tray"`      // Show the system tray icon (default: true)
+	SoundFile       string           `yaml:"sound_file"`    // Optional path to sound file to play with notifications
+	PollInterval    int              `yaml:"poll_interval"` // Polling interval in seconds for overflow channels (default: 60)
+	SystemTray      *bool            `yaml:"system_tray"`   // Show the system tray icon (default: true)
 	Twitch          TwitchConfig     `yaml:"twitch"`
 }
 
@@ -108,14 +107,6 @@ func (c *Config) GetPollInterval() int {
 		return 60 // Default to 60 seconds
 	}
 	return c.PollInterval
-}
-
-// ShouldPeriodicRestart returns whether the application should restart periodically (default: true)
-func (c *Config) ShouldPeriodicRestart() bool {
-	if c.PeriodicRestart == nil {
-		return true // Default to true
-	}
-	return *c.PeriodicRestart
 }
 
 func (c *Config) ShouldShowSystemTray() bool {

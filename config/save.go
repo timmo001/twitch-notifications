@@ -15,7 +15,6 @@ type persistedConfig struct {
 	NotifyOnStartup bool         `yaml:"notify_on_startup"`
 	SoundFile       string       `yaml:"sound_file"`
 	PollInterval    int          `yaml:"poll_interval"`
-	PeriodicRestart *bool        `yaml:"periodic_restart"`
 	SystemTray      *bool        `yaml:"system_tray,omitempty"`
 	Twitch          TwitchConfig `yaml:"twitch"`
 }
@@ -47,7 +46,6 @@ func writeConfigFile(configPath string, cfg *Config) error {
 		NotifyOnStartup: cfg.NotifyOnStartup,
 		SoundFile:       cfg.SoundFile,
 		PollInterval:    cfg.PollInterval,
-		PeriodicRestart: cfg.PeriodicRestart,
 		SystemTray:      cfg.SystemTray,
 		Twitch:          cfg.Twitch,
 	})

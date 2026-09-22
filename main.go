@@ -38,14 +38,13 @@ const (
 	subscriptionProcessDelay = 500 * time.Millisecond // Wait for subscriptions to process
 
 	// Background task intervals
-	healthCheckInterval  = 1 * time.Minute // Periodic health check (also refreshes tokens)
-	periodicRestartDelay = 1 * time.Hour   // Periodic restart interval for long-running stability
+	healthCheckInterval = 1 * time.Minute // Periodic health check (also refreshes tokens)
 
 	// Subscription timing
 	baseSubscriptionDelay = 1 * time.Second // Delay between subscription requests
 )
 
-// restartRequested is set to true when the periodic restart timer fires,
+// restartRequested is set to true when a restart is requested,
 // signaling main() to re-exec the process after cleanup.
 var restartRequested atomic.Bool
 var restartOpenRequested atomic.Bool
@@ -434,8 +433,8 @@ func main() {
 	statusJSON := flag.Bool("status-json", false, "Print structured daemon and channel status as JSON and exit")
 	followedLiveJSON := flag.Bool("followed-live-json", false, "Print all followed channels that are live as JSON and exit")
 	maxChars := flag.Int("max-chars", 0, "Maximum characters per live channel line in --status-bar-json tooltip")
-	startupDelay := flag.Bool("delay", false, "Delay startup to allow the previous instance to fully shut down (used during periodic restart)")
-	silent := flag.Bool("silent", false, "Suppress startup and initial monitoring notifications (used during periodic restart)")
+	startupDelay := flag.Bool("delay", false, "Delay startup to allow the previous instance to fully shut down (used during restart)")
+	silent := flag.Bool("silent", false, "Suppress startup and initial monitoring notifications (used during restart)")
 	flag.Usage = func() {
 		fmt.Fprintln(flag.CommandLine.Output(), "Usage: twitch-notifications [options]\n       twitch-notifications serve\n       twitch-notifications channel <add|remove> [arguments]\n\nRunning without arguments starts the notification daemon.\n\nOptions:")
 		flag.PrintDefaults()
@@ -662,7 +661,7 @@ func main() {
 	// Quit system tray
 	tray.Quit()
 
-	// If periodic restart or crash restart was requested, spawn a new instance before exiting
+	// If a restart was requested, spawn a new instance before exiting
 	if restartRequested.Load() {
 		log.Println("Restarting...")
 		utils.RestartSelf(restartOpenRequested.Load())
@@ -855,7 +854,7 @@ func handleAuthErrorWithRetry(ctx context.Context, configPath string, notifier *
 }
 
 // runNotifier runs the notifier initialization and main loop in a goroutine
-// silentStartup suppresses startup and initial monitoring notifications (e.g. after periodic restart)
+// silentStartup suppresses startup and initial monitoring notifications (e.g. after a restart)
 func runNotifier(ctx context.Context, cfg *config.Config, configPath string, silentStartup bool, openOnStartup bool) error {
 	ctx, cancel := context.WithCancel(ctx)
 	var workers sync.WaitGroup
@@ -1444,26 +1443,6 @@ func runNotifier(ctx context.Context, cfg *config.Config, configPath string, sil
 			}
 		}
 	})
-
-	// Periodic restart: after 1 hour, trigger a graceful shutdown and re-exec the process
-	// This helps recover from any accumulated state issues over long uptimes
-	if app.Config().ShouldPeriodicRestart() {
-		workers.Add(1)
-		utils.GoWithRecovery("periodic-restart", func() {
-			defer workers.Done()
-			timer := time.NewTimer(periodicRestartDelay)
-			defer timer.Stop()
-
-			select {
-			case <-ctx.Done():
-				return
-			case <-timer.C:
-				log.Println("Periodic restart: restarting application for long-running stability...")
-				restartRequested.Store(true)
-				utils.SendShutdownSignal()
-			}
-		})
-	}
 
 	// Wait for context cancellation (shutdown signal)
 	// This keeps the notifier running until shutdown is requested
