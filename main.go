@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"os/user"
@@ -39,6 +40,11 @@ const (
 
 	// Background task intervals
 	healthCheckInterval = 1 * time.Minute // Periodic health check (also refreshes tokens)
+	// Twitch requires validating the access token hourly.
+	tokenValidateInterval = 1 * time.Hour
+	// Minimum gap between automatic browser logins, so an unattended login
+	// that times out doesn't reopen the browser every health check.
+	automaticLoginInterval = 15 * time.Minute
 
 	// Subscription timing
 	baseSubscriptionDelay = 1 * time.Second // Delay between subscription requests
@@ -690,8 +696,33 @@ func isAuthError(err error) bool {
 type AuthRetryResult struct {
 	Config       *config.Config
 	TokenManager *auth.TokenManager
-	HelixClient  *twitch.HelixClient
 	AccessToken  string
+}
+
+// ensureValidToken returns an access token Twitch has confirmed. A rejected
+// token is refreshed once with the refresh token before giving up, so a
+// browser login is only needed when the refresh token no longer works.
+func ensureValidToken(ctx context.Context, tokenManager *auth.TokenManager) (string, error) {
+	token, err := tokenManager.GetAccessToken(ctx)
+	if err != nil {
+		return "", err
+	}
+	err = tokenManager.Validate(ctx)
+	if err == nil || !isAuthError(err) {
+		return token, err
+	}
+
+	log.Printf("Twitch rejected the access token, refreshing it: %v", err)
+	tokenManager.Invalidate(token)
+	token, err = tokenManager.GetAccessToken(ctx)
+	if err != nil {
+		return "", err
+	}
+	if err := tokenManager.Validate(ctx); err != nil {
+		return "", err
+	}
+	log.Println("Access token refreshed")
+	return token, nil
 }
 
 // LiveStatusTracker keeps track of channels currently known to be live.
@@ -803,13 +834,15 @@ func (app *Application) HelixClient() *twitch.HelixClient {
 	return app.helixClient
 }
 
-// UpdateFromAuthRetry updates the application state after a successful OAuth retry
+// UpdateFromAuthRetry updates the application state after a successful OAuth retry.
+// The Helix client is updated in place because the poller and EventSub
+// handlers hold references to it.
 func (app *Application) UpdateFromAuthRetry(result *AuthRetryResult) {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	app.cfg = result.Config
 	app.tokenManager = result.TokenManager
-	app.helixClient = result.HelixClient
+	app.helixClient.UpdateAccessToken(result.AccessToken)
 }
 
 // UpdateHelixClientToken updates the Helix client's access token (thread-safe)
@@ -821,17 +854,24 @@ func (app *Application) UpdateHelixClientToken(token string) {
 
 // shouldTriggerOAuthRetry determines if an error warrants OAuth retry
 func shouldTriggerOAuthRetry(err error) bool {
-	return isAuthError(err) || errors.Is(err, auth.ErrMissingToken)
+	return isAuthError(err) || errors.Is(err, auth.ErrMissingToken) || errors.Is(err, auth.ErrMissingScope)
 }
+
+// oauthFlowMu stops two browser logins competing for the callback port.
+var oauthFlowMu sync.Mutex
 
 // handleAuthErrorWithRetry attempts OAuth retry if the error warrants it.
 // Returns (nil, nil) if the error doesn't warrant OAuth retry (caller should handle original error).
 // Returns (result, nil) on successful retry.
 // Returns (nil, error) if OAuth retry fails.
-func handleAuthErrorWithRetry(ctx context.Context, configPath string, notifier *notify.Notifier, cfg *config.Config, originalErr error) (*AuthRetryResult, error) {
+func handleAuthErrorWithRetry(ctx context.Context, configPath string, notifier *notify.Notifier, originalErr error) (*AuthRetryResult, error) {
 	if !shouldTriggerOAuthRetry(originalErr) {
 		return nil, nil
 	}
+	if !oauthFlowMu.TryLock() {
+		return nil, fmt.Errorf("a Twitch login is already in progress")
+	}
+	defer oauthFlowMu.Unlock()
 
 	log.Printf("Auth error detected, triggering OAuth flow: %v", originalErr)
 
@@ -839,16 +879,14 @@ func handleAuthErrorWithRetry(ctx context.Context, configPath string, notifier *
 	if err != nil {
 		return nil, fmt.Errorf("OAuth retry failed: %w", err)
 	}
-
-	helixClient, err := twitch.NewHelixClient(newCfg.Twitch.ClientID, accessToken)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Helix client after OAuth: %w", err)
+	// The reloaded token has no known expiry until Twitch confirms it.
+	if err := tokenManager.Validate(ctx); err != nil {
+		return nil, fmt.Errorf("new access token failed validation: %w", err)
 	}
 
 	return &AuthRetryResult{
 		Config:       newCfg,
 		TokenManager: tokenManager,
-		HelixClient:  helixClient,
 		AccessToken:  accessToken,
 	}, nil
 }
@@ -890,13 +928,13 @@ func runNotifier(ctx context.Context, cfg *config.Config, configPath string, sil
 	// Initialize token manager with persistence callback
 	tokenManager := setupTokenManager(cfg, configPath)
 
-	// Get access token (will attempt refresh if access token is empty but refresh token exists)
-	accessToken, err := tokenManager.GetAccessToken(ctx)
+	// Get a token Twitch has validated, refreshing it first if Twitch rejects it
+	accessToken, err := ensureValidToken(ctx, tokenManager)
 	if err != nil {
-		log.Printf("Failed to get access token: %v", err)
+		log.Printf("Failed to get a valid access token: %v", err)
 
-		// Try OAuth retry if it's an auth error or missing token
-		result, retryErr := handleAuthErrorWithRetry(ctx, configPath, notifier, cfg, err)
+		// Fall back to a browser login when the refresh token no longer works
+		result, retryErr := handleAuthErrorWithRetry(ctx, configPath, notifier, err)
 		if retryErr != nil {
 			return retryErr
 		}
@@ -906,6 +944,7 @@ func runNotifier(ctx context.Context, cfg *config.Config, configPath string, sil
 		}
 		cfg, tokenManager, accessToken = result.Config, result.TokenManager, result.AccessToken
 	}
+	tokenValidatedAt := time.Now()
 
 	// Initialize Helix client
 	helixClient, err := twitch.NewHelixClient(cfg.Twitch.ClientID, accessToken)
@@ -916,23 +955,7 @@ func runNotifier(ctx context.Context, cfg *config.Config, configPath string, sil
 	// Get user ID
 	userID, err := helixClient.GetUserID(ctx)
 	if err != nil {
-		// Try OAuth retry if it's an auth error
-		result, retryErr := handleAuthErrorWithRetry(ctx, configPath, notifier, cfg, err)
-		if retryErr != nil {
-			return retryErr
-		}
-		if result == nil {
-			// Not an auth error, return original error
-			return fmt.Errorf("failed to get user ID: %w", err)
-		}
-		// Update state from successful retry
-		cfg, tokenManager, helixClient, accessToken = result.Config, result.TokenManager, result.HelixClient, result.AccessToken
-
-		// Retry getting user ID with new client
-		userID, err = helixClient.GetUserID(ctx)
-		if err != nil {
-			return fmt.Errorf("failed to get user ID after OAuth setup: %w", err)
-		}
+		return fmt.Errorf("failed to get user ID: %w", err)
 	}
 
 	log.Printf("Authenticated as user ID: %s", userID)
@@ -1096,12 +1119,17 @@ func runNotifier(ctx context.Context, cfg *config.Config, configPath string, sil
 	// Track if we've done initial live stream check (only on first startup)
 	var initialLiveCheckDone bool
 	var initialLiveCheckMu sync.Mutex
+	// Set while a session's subscriptions are being created, so the health
+	// check doesn't treat them as missing.
+	var subscribing atomic.Int32
 
 	// Setup session ready handler for resubscriptions
 	onSessionReady := func(sessionCtx context.Context, sessionID string) {
 		// A fresh session needs every configured subscription, including any that
 		// failed in an earlier session. Twitch transfers subscriptions on handover.
+		subscribing.Add(1)
 		subscribeBatch(sessionCtx, app.HelixClient(), sessionID, eventSubChannels)
+		subscribing.Add(-1)
 		if sessionCtx.Err() != nil {
 			return
 		}
@@ -1377,51 +1405,114 @@ func runNotifier(ctx context.Context, cfg *config.Config, configPath string, sil
 		}
 	})
 
+	// Health check state is only touched by the health-check goroutine.
+	var lastLoginAttempt time.Time
+	var lastSessionID string
+	var disconnectedChecks int
+
+	// checkAuth keeps the token valid: it refreshes before expiry, validates
+	// hourly as Twitch requires, refreshes once on a 401, and only then falls
+	// back to a browser login, at most once per automaticLoginInterval.
+	checkAuth := func() {
+		tokenManager := app.TokenManager()
+		validateDue := time.Since(tokenValidatedAt) >= tokenValidateInterval
+		var token string
+		var err error
+		if validateDue {
+			token, err = ensureValidToken(ctx, tokenManager)
+		} else {
+			token, err = tokenManager.GetAccessToken(ctx)
+		}
+		if err == nil {
+			app.UpdateHelixClientToken(token)
+			if validateDue {
+				tokenValidatedAt = time.Now()
+				log.Println("Health check: access token validated")
+			}
+			if _, err = app.HelixClient().GetUserID(ctx); isAuthError(err) {
+				// Twitch rejected the token before its expiry; refresh and confirm.
+				if token, err = ensureValidToken(ctx, tokenManager); err == nil {
+					app.UpdateHelixClientToken(token)
+					tokenValidatedAt = time.Now()
+				}
+			}
+		}
+		if err == nil {
+			log.Println("Health check: Twitch API reachable, token is valid")
+			return
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		log.Printf("Health check: Twitch API check failed: %v", err)
+		if !shouldTriggerOAuthRetry(err) {
+			return
+		}
+		if since := time.Since(lastLoginAttempt); !lastLoginAttempt.IsZero() && since < automaticLoginInterval {
+			log.Printf("Health check: skipping automatic login, next attempt in %v", (automaticLoginInterval - since).Round(time.Second))
+			return
+		}
+		lastLoginAttempt = time.Now()
+		result, retryErr := handleAuthErrorWithRetry(ctx, app.configPath, app.notifier, err)
+		if retryErr != nil {
+			log.Printf("Health check: OAuth retry failed: %v", retryErr)
+			return
+		}
+		if result != nil {
+			app.UpdateFromAuthRetry(result)
+			tokenValidatedAt = time.Now()
+		}
+	}
+
+	// checkEventSub confirms the WebSocket is connected and that every EventSub
+	// channel still has an enabled subscription on the current session,
+	// recreating any that are missing (for example after an auth failure).
+	checkEventSub := func() {
+		sessionID := eventSubClient.GetSessionID()
+		if sessionID == "" {
+			disconnectedChecks++
+			lastSessionID = ""
+			log.Printf("Health check: EventSub disconnected for %d check(s), reconnect in progress", disconnectedChecks)
+			return
+		}
+		if disconnectedChecks > 0 {
+			log.Printf("Health check: EventSub reconnected after %d check(s)", disconnectedChecks)
+			disconnectedChecks = 0
+		}
+		// Give a new session a full interval to finish subscribing first.
+		stable := sessionID == lastSessionID
+		lastSessionID = sessionID
+		if !stable || subscribing.Load() > 0 || len(eventSubChannels) == 0 {
+			return
+		}
+
+		subscribed, err := app.HelixClient().GetSubscribedBroadcasters(ctx, sessionID)
+		if err != nil {
+			log.Printf("Health check: failed to list EventSub subscriptions: %v", err)
+			return
+		}
+		missing := make([]twitch.Channel, 0)
+		for _, channel := range eventSubChannels {
+			if !subscribed[channel.ID] {
+				missing = append(missing, channel)
+			}
+		}
+		if len(missing) == 0 {
+			log.Printf("Health check: EventSub session %s has all %d subscriptions", sessionID, len(eventSubChannels))
+			return
+		}
+		log.Printf("Health check: EventSub session %s is missing %d of %d subscriptions, resubscribing", sessionID, len(missing), len(eventSubChannels))
+		subscribing.Add(1)
+		subscribeBatch(ctx, app.HelixClient(), sessionID, missing)
+		subscribing.Add(-1)
+	}
+
 	// Health check function called periodically to keep the connection and token fresh.
 	runHealthCheck := func() {
 		log.Println("Running health check...")
-
-		// Check if EventSub connection is still alive
-		sessionID := eventSubClient.GetSessionID()
-		connectionHealthy := sessionID != ""
-		if !connectionHealthy {
-			log.Printf("Warning: EventSub session ID is empty, connection may be dead")
-			// The connection should auto-reconnect, but we can log it
-		} else {
-			log.Printf("Health check: EventSub session active (ID: %s)", sessionID)
-		}
-
-		// First, try to get a valid token (this may trigger a refresh)
-		newToken, err := app.TokenManager().GetAccessToken(ctx)
-		if err != nil {
-			log.Printf("Health check: Failed to get access token: %v", err)
-
-			// Try OAuth retry if warranted
-			result, retryErr := handleAuthErrorWithRetry(ctx, app.configPath, app.notifier, app.Config(), err)
-			if retryErr != nil {
-				log.Printf("Health check: OAuth retry failed: %v", retryErr)
-			} else if result != nil {
-				app.UpdateFromAuthRetry(result)
-			}
-		} else {
-			// Token obtained, update clients
-			app.UpdateHelixClientToken(newToken)
-
-			// Make actual API call to verify token works
-			_, apiErr := app.HelixClient().GetUserID(ctx)
-			if apiErr != nil {
-				log.Printf("Health check: API call failed: %v", apiErr)
-				result, retryErr := handleAuthErrorWithRetry(ctx, app.configPath, app.notifier, app.Config(), apiErr)
-				if retryErr != nil {
-					log.Printf("Health check: OAuth retry failed: %v", retryErr)
-				} else if result != nil {
-					app.UpdateFromAuthRetry(result)
-				}
-			} else {
-				log.Println("Health check: API call successful, token is valid")
-			}
-		}
-
+		// Auth first, so a subscription check never runs with a stale token.
+		checkAuth()
+		checkEventSub()
 		log.Println("Health check complete")
 	}
 
@@ -1602,11 +1693,15 @@ func subscribeBatch(ctx context.Context, helixClient *twitch.HelixClient, sessio
 		}
 
 		rateLimitResp, err := helixClient.CreateEventSubSubscription(ctx, sessionID, channel.ID)
+		var apiErr *twitch.APIError
+		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusConflict {
+			// Twitch already has this subscription on the session.
+			err = nil
+		}
 
 		if err != nil {
 			// Check for typed APIError to determine error type
-			var apiErr *twitch.APIError
-			if errors.As(err, &apiErr) && apiErr.IsRateLimited() {
+			if apiErr != nil && apiErr.IsRateLimited() {
 				// 429 error - use centralized rate limit waiting
 				log.Printf("Rate limited (429) for %s. Waiting for rate limit to reset...", channel.Username)
 

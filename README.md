@@ -410,6 +410,16 @@ Refresh requests are serialised. New tokens are validated before use and saved
 by atomically replacing the config file. If saving fails, the next token request
 retries the save using the tokens already held in memory.
 
+The daemon validates the access token with Twitch at startup and every hour, as
+Twitch requires. If Twitch rejects the token, it refreshes it with the refresh
+token first. It only opens the browser to log in again when the refresh token no
+longer works, and then no more than once every 15 minutes. The login callback
+listens on this machine only.
+
+Every minute, a health check confirms the Twitch API is reachable and that each
+EventSub channel still has an active subscription on the current connection. It
+recreates any that are missing.
+
 ## Development Checks
 
 Run the linters, race-enabled tests and known-vulnerability scan:

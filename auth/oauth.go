@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -20,9 +21,13 @@ import (
 const (
 	tokenExpiryBuffer = 5 * time.Minute // Refresh tokens before they expire
 	tokenEndpoint     = "https://id.twitch.tv/oauth2/token"
+	validateEndpoint  = "https://id.twitch.tv/oauth2/validate"
 )
 
 var ErrMissingToken = errors.New("no valid access token and no refresh token available")
+
+// ErrMissingScope means the token cannot read follows and needs a new login.
+var ErrMissingScope = fmt.Errorf("access token is missing the %s scope", RequiredScope)
 
 // OAuthError excludes response bodies so credentials cannot leak through logs.
 type OAuthError struct {
@@ -65,6 +70,7 @@ type TokenManager struct {
 	tokensDirty    bool
 	httpClient     *http.Client
 	tokenURL       string
+	validateURL    string
 	retryOptions   utils.RetryOptions
 }
 
@@ -91,7 +97,69 @@ func NewTokenManager(clientID, clientSecret, accessToken string) *TokenManager {
 		refresh:      make(chan struct{}, 1),
 		httpClient:   &http.Client{Timeout: utils.HTTPClientTimeout},
 		tokenURL:     tokenEndpoint,
+		validateURL:  validateEndpoint,
 		retryOptions: utils.DefaultRetryOptions(),
+	}
+}
+
+// Validate asks Twitch whether the current access token is still valid, as
+// Twitch requires at startup and hourly, and records its remaining lifetime.
+func (tm *TokenManager) Validate(ctx context.Context) error {
+	tm.mu.RLock()
+	token, clientID := tm.AccessToken, tm.ClientID
+	tm.mu.RUnlock()
+	if token == "" {
+		return ErrMissingToken
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, tm.validateURL, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "OAuth "+token)
+	resp, err := tm.httpClient.Do(req)
+	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+		return &OAuthError{StatusCode: resp.StatusCode}
+	}
+	var result struct {
+		ClientID  string   `json:"client_id"`
+		Scopes    []string `json:"scopes"`
+		ExpiresIn int      `json:"expires_in"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&result); err != nil {
+		return fmt.Errorf("invalid OAuth validate response")
+	}
+	if result.ClientID != clientID {
+		return &OAuthError{StatusCode: http.StatusUnauthorized}
+	}
+	if !slices.Contains(result.Scopes, RequiredScope) {
+		return ErrMissingScope
+	}
+
+	tm.mu.Lock()
+	if tm.AccessToken == token && result.ExpiresIn > 0 {
+		tm.ExpiresAt = time.Now().Add(time.Duration(result.ExpiresIn) * time.Second)
+	}
+	tm.mu.Unlock()
+	return nil
+}
+
+// Invalidate marks token as expired so the next GetAccessToken refreshes it.
+// A token another caller has already replaced is left alone.
+func (tm *TokenManager) Invalidate(token string) {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	if tm.AccessToken == token {
+		tm.ExpiresAt = time.Unix(1, 0)
 	}
 }
 

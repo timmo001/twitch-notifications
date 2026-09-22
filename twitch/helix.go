@@ -484,6 +484,73 @@ func (hc *HelixClient) CreateEventSubSubscription(ctx context.Context, sessionID
 	return response, nil
 }
 
+// GetSubscribedBroadcasters returns the broadcasters with an enabled
+// stream.online subscription on the given EventSub WebSocket session.
+func (hc *HelixClient) GetSubscribedBroadcasters(ctx context.Context, sessionID string) (map[string]bool, error) {
+	subscribed := make(map[string]bool)
+	after := ""
+	for {
+		if _, err := hc.WaitForRateLimit(ctx); err != nil {
+			return nil, err
+		}
+
+		// Twitch allows filtering by status or type, not both.
+		params := url.Values{}
+		params.Set("status", "enabled")
+		if after != "" {
+			params.Set("after", after)
+		}
+		req, err := http.NewRequestWithContext(ctx, "GET", "https://api.twitch.tv/helix/eventsub/subscriptions?"+params.Encode(), nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create subscriptions request: %w", err)
+		}
+		req.Header.Set("Client-ID", hc.clientID)
+		req.Header.Set("Authorization", "Bearer "+hc.getAccessToken())
+
+		resp, err := hc.httpClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get EventSub subscriptions: %w", err)
+		}
+		hc.parseRateLimitHeaders(resp)
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			return nil, NewAPIError(resp.StatusCode, http.StatusText(resp.StatusCode), body)
+		}
+
+		var result struct {
+			Data []struct {
+				Type      string `json:"type"`
+				Condition struct {
+					BroadcasterUserID string `json:"broadcaster_user_id"`
+				} `json:"condition"`
+				Transport struct {
+					SessionID string `json:"session_id"`
+				} `json:"transport"`
+			} `json:"data"`
+			Pagination struct {
+				Cursor string `json:"cursor"`
+			} `json:"pagination"`
+		}
+		err = json.NewDecoder(resp.Body).Decode(&result)
+		resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode EventSub subscriptions: %w", err)
+		}
+
+		for _, subscription := range result.Data {
+			if subscription.Type == "stream.online" && subscription.Transport.SessionID == sessionID {
+				subscribed[subscription.Condition.BroadcasterUserID] = true
+			}
+		}
+
+		after = result.Pagination.Cursor
+		if after == "" {
+			return subscribed, nil
+		}
+	}
+}
+
 // LiveStream represents a currently live stream
 type LiveStream struct {
 	BroadcasterUserID    string
