@@ -3,6 +3,7 @@ package twitch
 import (
 	"context"
 	"log"
+	"maps"
 	"sync"
 	"time"
 )
@@ -16,7 +17,7 @@ type Poller struct {
 	channels       []Channel // Channels to poll (overflow channels beyond EventSub limit)
 	pollInterval   time.Duration
 	onStreamOnline StreamOnlineCallback
-	liveStreams    map[string]bool // Track which channels are currently live
+	liveStreams    map[string]LiveStream // Currently live channels from the last poll
 	liveStreamsMu  sync.RWMutex
 	isFirstPoll    bool // Track if this is the first poll (to skip notifications for already-live streams)
 	ctx            context.Context
@@ -33,7 +34,7 @@ func NewPoller(helixClient *HelixClient, channels []Channel, pollInterval time.D
 		channels:       channels,
 		pollInterval:   pollInterval,
 		onStreamOnline: onStreamOnline,
-		liveStreams:    make(map[string]bool),
+		liveStreams:    make(map[string]LiveStream),
 		isFirstPoll:    true,
 	}
 }
@@ -88,21 +89,16 @@ func (p *Poller) GetPolledChannelIDs() []string {
 func (p *Poller) IsChannelLive(channelID string) bool {
 	p.liveStreamsMu.RLock()
 	defer p.liveStreamsMu.RUnlock()
-	return p.liveStreams[channelID]
+	_, live := p.liveStreams[channelID]
+	return live
 }
 
-// GetLiveChannelIDs returns the IDs of all currently live polled channels
-func (p *Poller) GetLiveChannelIDs() []string {
+// GetLiveStreams returns the polled channels that were live at the last poll,
+// keyed by channel ID.
+func (p *Poller) GetLiveStreams() map[string]LiveStream {
 	p.liveStreamsMu.RLock()
 	defer p.liveStreamsMu.RUnlock()
-
-	var live []string
-	for id, isLive := range p.liveStreams {
-		if isLive {
-			live = append(live, id)
-		}
-	}
-	return live
+	return maps.Clone(p.liveStreams)
 }
 
 // pollLoop is the main polling loop
@@ -142,12 +138,6 @@ func (p *Poller) poll() {
 		return
 	}
 
-	// Build a set of currently live channel IDs
-	currentlyLive := make(map[string]bool)
-	for id := range liveStreams {
-		currentlyLive[id] = true
-	}
-
 	// Check for newly live streams (was not live before, is live now)
 	p.liveStreamsMu.Lock()
 	isFirstPoll := p.isFirstPoll
@@ -155,8 +145,7 @@ func (p *Poller) poll() {
 
 	newlyLive := make([]LiveStream, 0)
 	for channelID, stream := range liveStreams {
-		wasLive := p.liveStreams[channelID]
-		if !wasLive {
+		if _, wasLive := p.liveStreams[channelID]; !wasLive {
 			// Channel just went live
 			newlyLive = append(newlyLive, stream)
 		}
@@ -164,7 +153,7 @@ func (p *Poller) poll() {
 
 	// Update our tracking map
 	previousCount := len(p.liveStreams)
-	p.liveStreams = currentlyLive
+	p.liveStreams = liveStreams
 	p.liveStreamsMu.Unlock()
 
 	// Only log when the number of live channels changes to reduce log noise
@@ -216,13 +205,8 @@ func (p *Poller) ForceCheck(ctx context.Context) (map[string]LiveStream, error) 
 		return nil, err
 	}
 
-	currentLive := make(map[string]bool, len(liveStreams))
-	for id := range liveStreams {
-		currentLive[id] = true
-	}
-
 	p.liveStreamsMu.Lock()
-	p.liveStreams = currentLive
+	p.liveStreams = maps.Clone(liveStreams)
 	p.isFirstPoll = false
 	p.liveStreamsMu.Unlock()
 

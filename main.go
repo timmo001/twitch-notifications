@@ -1141,20 +1141,10 @@ func runNotifier(ctx context.Context, cfg *config.Config, configPath string, sil
 				delete(nextLiveStreams, channelID)
 			}
 
-			polledLiveIDs := poller.GetLiveChannelIDs()
-			for _, channelID := range polledLiveIDs {
+			polledLiveStreams := poller.GetLiveStreams()
+			for channelID, liveStream := range polledLiveStreams {
 				nextLive[channelID] = true
-			}
-
-			if len(polledLiveIDs) > 0 {
-				polledLiveStreams, err := app.HelixClient().GetLiveStreams(ctx, polledLiveIDs)
-				if err != nil {
-					log.Printf("Failed to refresh polled live stream titles: %v", err)
-				} else {
-					for channelID, liveStream := range polledLiveStreams {
-						nextLiveStreams[channelID] = liveStream
-					}
-				}
+				nextLiveStreams[channelID] = liveStream
 			}
 		}
 
