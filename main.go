@@ -40,6 +40,8 @@ const (
 
 	// Background task intervals
 	healthCheckInterval = 1 * time.Minute // Periodic health check (also refreshes tokens)
+	// Start times this close together belong to the same stream.
+	sameStreamTolerance = 1 * time.Minute
 	// Twitch requires validating the access token hourly.
 	tokenValidateInterval = 1 * time.Hour
 	// Minimum gap between automatic browser logins, so an unattended login
@@ -999,9 +1001,31 @@ func runNotifier(ctx context.Context, cfg *config.Config, configPath string, sil
 	liveStreamByChannelID := make(map[string]twitch.LiveStream)
 	var liveStreamMu sync.RWMutex
 
+	// Start time of the last stream notified for each channel, so a stream
+	// seen by both EventSub and the live status refresh is only notified once.
+	notifiedStreamStart := make(map[string]time.Time)
+	var notifiedStreamMu sync.Mutex
+	claimNotification := func(event twitch.StreamOnlineEvent) bool {
+		if event.BroadcasterUserID == "" || event.StartedAt.IsZero() {
+			return true
+		}
+		notifiedStreamMu.Lock()
+		defer notifiedStreamMu.Unlock()
+		last, ok := notifiedStreamStart[event.BroadcasterUserID]
+		if ok && event.StartedAt.Sub(last).Abs() < sameStreamTolerance {
+			return false
+		}
+		notifiedStreamStart[event.BroadcasterUserID] = event.StartedAt
+		return true
+	}
+
 	// Setup stream online handler (shared between EventSub and Poller)
 	onStreamOnline := func(event twitch.StreamOnlineEvent) {
 		liveStatus.MarkLive(event.BroadcasterUserID)
+		if !claimNotification(event) {
+			log.Printf("Stream online: %s (%s) already notified", event.BroadcasterUserName, event.BroadcasterUserLogin)
+			return
+		}
 
 		if event.BroadcasterUserID != "" && (event.StreamTitle == "" || event.GameName == "" || event.ThumbnailURL == "") {
 			liveStreams, err := app.HelixClient().GetLiveStreams(ctx, []string{event.BroadcasterUserID})
@@ -1058,6 +1082,11 @@ func runNotifier(ctx context.Context, cfg *config.Config, configPath string, sil
 		poller.Start(ctx)
 	}
 
+	// EventSub channels live at the last successful refresh. nil until the
+	// first refresh, whose live channels were already live at startup.
+	var eventSubLiveBaseline map[string]bool
+	var eventSubBaselineMu sync.Mutex
+
 	refreshLiveStatus := func() {
 		nextLive := liveStatus.Snapshot()
 
@@ -1070,6 +1099,7 @@ func runNotifier(ctx context.Context, cfg *config.Config, configPath string, sil
 		}
 		liveStreamMu.RUnlock()
 
+		var missedStreams []twitch.LiveStream
 		if len(eventSubChannelIDs) > 0 {
 			liveStreams, err := app.HelixClient().GetLiveStreams(ctx, eventSubChannelIDs)
 			if err != nil {
@@ -1079,10 +1109,18 @@ func runNotifier(ctx context.Context, cfg *config.Config, configPath string, sil
 					delete(nextLive, channelID)
 					delete(nextLiveStreams, channelID)
 				}
+				eventSubBaselineMu.Lock()
+				baseline := make(map[string]bool, len(liveStreams))
 				for channelID, liveStream := range liveStreams {
 					nextLive[channelID] = true
 					nextLiveStreams[channelID] = liveStream
+					baseline[channelID] = true
+					if eventSubLiveBaseline != nil && !eventSubLiveBaseline[channelID] {
+						missedStreams = append(missedStreams, liveStream)
+					}
 				}
+				eventSubLiveBaseline = baseline
+				eventSubBaselineMu.Unlock()
 			}
 		}
 
@@ -1114,6 +1152,20 @@ func runNotifier(ctx context.Context, cfg *config.Config, configPath string, sil
 		liveStreamMu.Lock()
 		liveStreamByChannelID = nextLiveStreams
 		liveStreamMu.Unlock()
+
+		// Catch streams that started while EventSub was reconnecting.
+		for _, stream := range missedStreams {
+			log.Printf("Live status refresh: %s (%s) is live", stream.BroadcasterUserName, stream.BroadcasterUserLogin)
+			onStreamOnline(twitch.StreamOnlineEvent{
+				BroadcasterUserID:    stream.BroadcasterUserID,
+				BroadcasterUserLogin: stream.BroadcasterUserLogin,
+				BroadcasterUserName:  stream.BroadcasterUserName,
+				StreamTitle:          stream.StreamTitle,
+				GameName:             stream.GameName,
+				ThumbnailURL:         stream.ThumbnailURL,
+				StartedAt:            stream.StartedAt,
+			})
+		}
 	}
 
 	// Track if we've done initial live stream check (only on first startup)
