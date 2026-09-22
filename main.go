@@ -66,10 +66,11 @@ type statusJSONChannel struct {
 }
 
 type statusJSONPayload struct {
-	Active    bool                `json:"active"`
-	State     string              `json:"state"`
-	LiveCount int                 `json:"liveCount"`
-	Channels  []statusJSONChannel `json:"channels"`
+	Active       bool                `json:"active"`
+	State        string              `json:"state"`
+	LiveCount    int                 `json:"liveCount"`
+	PollInterval int                 `json:"pollInterval,omitempty"`
+	Channels     []statusJSONChannel `json:"channels"`
 }
 
 func printBarJSONStatus(text, tooltip, class string) {
@@ -492,7 +493,9 @@ func main() {
 				os.Exit(1)
 			}
 
-			if encodeErr := json.NewEncoder(os.Stdout).Encode(buildStatusJSONPayload(active, liveCount, liveChannels, cfg.WatchedChannels)); encodeErr != nil {
+			payload := buildStatusJSONPayload(active, liveCount, liveChannels, cfg.WatchedChannels)
+			payload.PollInterval = cfg.GetPollInterval()
+			if encodeErr := json.NewEncoder(os.Stdout).Encode(payload); encodeErr != nil {
 				fmt.Fprintf(os.Stderr, "Failed to encode status: %v\n", encodeErr)
 				os.Exit(1)
 			}
