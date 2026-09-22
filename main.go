@@ -1477,7 +1477,7 @@ func runNotifier(ctx context.Context, cfg *config.Config, configPath string, sil
 	// checkAuth keeps the token valid: it refreshes before expiry, validates
 	// hourly as Twitch requires, refreshes once on a 401, and only then falls
 	// back to a browser login, at most once per automaticLoginInterval.
-	checkAuth := func() {
+	checkAuth := func() bool {
 		lastAuthCheck = time.Now()
 		tokenManager := app.TokenManager()
 		validateDue := time.Since(tokenValidatedAt) >= tokenValidateInterval
@@ -1503,42 +1503,42 @@ func runNotifier(ctx context.Context, cfg *config.Config, configPath string, sil
 			}
 		}
 		if err == nil {
-			log.Println("Health check: Twitch API reachable, token is valid")
-			return
+			return true
 		}
 		if ctx.Err() != nil {
-			return
+			return false
 		}
 		log.Printf("Health check: Twitch API check failed: %v", err)
 		if !shouldTriggerOAuthRetry(err) {
-			return
+			return false
 		}
 		if since := time.Since(lastLoginAttempt); !lastLoginAttempt.IsZero() && since < automaticLoginInterval {
 			log.Printf("Health check: skipping automatic login, next attempt in %v", (automaticLoginInterval - since).Round(time.Second))
-			return
+			return false
 		}
 		lastLoginAttempt = time.Now()
 		result, retryErr := handleAuthErrorWithRetry(ctx, app.configPath, app.notifier, err)
 		if retryErr != nil {
 			log.Printf("Health check: OAuth retry failed: %v", retryErr)
-			return
+			return false
 		}
 		if result != nil {
 			app.UpdateFromAuthRetry(result)
 			tokenValidatedAt = time.Now()
 		}
+		return result != nil
 	}
 
 	// checkEventSub confirms the WebSocket is connected and that every EventSub
 	// channel still has an enabled subscription on the current session,
 	// recreating any that are missing (for example after an auth failure).
-	checkEventSub := func() {
+	checkEventSub := func() bool {
 		sessionID := eventSubClient.GetSessionID()
 		if sessionID == "" {
 			disconnectedChecks++
 			lastSessionID = ""
 			log.Printf("Health check: EventSub disconnected for %d check(s), reconnect in progress", disconnectedChecks)
-			return
+			return false
 		}
 		if disconnectedChecks > 0 {
 			log.Printf("Health check: EventSub reconnected after %d check(s)", disconnectedChecks)
@@ -1548,13 +1548,13 @@ func runNotifier(ctx context.Context, cfg *config.Config, configPath string, sil
 		stable := sessionID == lastSessionID
 		lastSessionID = sessionID
 		if !stable || subscribing.Load() > 0 || len(eventSubChannels) == 0 {
-			return
+			return true
 		}
 
 		subscribed, err := app.HelixClient().GetSubscribedBroadcasters(ctx, sessionID)
 		if err != nil {
 			log.Printf("Health check: failed to list EventSub subscriptions: %v", err)
-			return
+			return false
 		}
 		missing := make([]twitch.Channel, 0)
 		for _, channel := range eventSubChannels {
@@ -1563,22 +1563,32 @@ func runNotifier(ctx context.Context, cfg *config.Config, configPath string, sil
 			}
 		}
 		if len(missing) == 0 {
-			log.Printf("Health check: EventSub session %s has all %d subscriptions", sessionID, len(eventSubChannels))
-			return
+			return true
 		}
 		log.Printf("Health check: EventSub session %s is missing %d of %d subscriptions, resubscribing", sessionID, len(missing), len(eventSubChannels))
 		subscribing.Add(1)
 		subscribeBatch(ctx, app.HelixClient(), sessionID, missing)
 		subscribing.Add(-1)
+		return false
 	}
 
 	// Health check function called periodically to keep the connection and token fresh.
+	// A healthy check is logged hourly, or straight away after a problem.
+	var lastHealthyLog time.Time
+	healthy := true
 	runHealthCheck := func() {
-		log.Println("Running health check...")
 		// Auth first, so a subscription check never runs with a stale token.
-		checkAuth()
-		checkEventSub()
-		log.Println("Health check complete")
+		authOK := checkAuth()
+		eventSubOK := checkEventSub()
+		if !authOK || !eventSubOK {
+			healthy = false
+			return
+		}
+		if !healthy || time.Since(lastHealthyLog) >= time.Hour {
+			log.Printf("Health check: OK (token valid, EventSub session %s)", eventSubClient.GetSessionID())
+			lastHealthyLog = time.Now()
+		}
+		healthy = true
 	}
 
 	// Run periodic application health check in background
@@ -1835,12 +1845,9 @@ func subscribeBatch(ctx context.Context, helixClient *twitch.HelixClient, sessio
 			successCount++
 			log.Printf("✓ Subscribed to: %s", channel.Username)
 
-			// Log rate limit status if available
-			if rateLimitResp.RateLimit != nil {
-				log.Printf("Rate limit: %d/%d remaining, resets at %v",
-					rateLimitResp.RateLimit.Remaining,
-					rateLimitResp.RateLimit.Limit,
-					rateLimitResp.RateLimit.Reset)
+			// Only log the rate limit when it's running low
+			if rl := rateLimitResp.RateLimit; rl != nil && rl.Limit > 0 && rl.Remaining*5 < rl.Limit {
+				log.Printf("Rate limit low: %d/%d remaining, resets at %v", rl.Remaining, rl.Limit, rl.Reset)
 			}
 		}
 

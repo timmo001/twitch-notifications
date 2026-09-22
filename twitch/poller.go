@@ -163,11 +163,12 @@ func (p *Poller) poll() {
 	}
 
 	// Update our tracking map
+	previousCount := len(p.liveStreams)
 	p.liveStreams = currentlyLive
 	p.liveStreamsMu.Unlock()
 
-	// Only log when there are live streams to reduce log noise
-	if len(liveStreams) > 0 {
+	// Only log when the number of live channels changes to reduce log noise
+	if isFirstPoll || len(liveStreams) != previousCount {
 		log.Printf("Poller: %d/%d overflow channels are live", len(liveStreams), len(channelIDs))
 	}
 
