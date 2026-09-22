@@ -42,6 +42,8 @@ const (
 	healthCheckInterval = 1 * time.Minute // Periodic health check (also refreshes tokens)
 	// Start times this close together belong to the same stream.
 	sameStreamTolerance = 1 * time.Minute
+	// Minimum gap between auth checks triggered by rejected requests.
+	authRecheckGap = 15 * time.Second
 	// Twitch requires validating the access token hourly.
 	tokenValidateInterval = 1 * time.Hour
 	// Minimum gap between automatic browser logins, so an unattended login
@@ -953,6 +955,15 @@ func runNotifier(ctx context.Context, cfg *config.Config, configPath string, sil
 	if err != nil {
 		return fmt.Errorf("failed to create Helix client: %w", err)
 	}
+	// Any rejected request wakes the health check to recover the token now,
+	// rather than leaving the poller and live refresh failing until it runs.
+	authCheckNow := make(chan struct{}, 1)
+	helixClient.SetUnauthorizedHandler(func() {
+		select {
+		case authCheckNow <- struct{}{}:
+		default:
+		}
+	})
 
 	// Get user ID
 	userID, err := helixClient.GetUserID(ctx)
@@ -1459,6 +1470,7 @@ func runNotifier(ctx context.Context, cfg *config.Config, configPath string, sil
 
 	// Health check state is only touched by the health-check goroutine.
 	var lastLoginAttempt time.Time
+	var lastAuthCheck time.Time
 	var lastSessionID string
 	var disconnectedChecks int
 
@@ -1466,6 +1478,7 @@ func runNotifier(ctx context.Context, cfg *config.Config, configPath string, sil
 	// hourly as Twitch requires, refreshes once on a 401, and only then falls
 	// back to a browser login, at most once per automaticLoginInterval.
 	checkAuth := func() {
+		lastAuthCheck = time.Now()
 		tokenManager := app.TokenManager()
 		validateDue := time.Since(tokenValidatedAt) >= tokenValidateInterval
 		var token string
@@ -1583,6 +1596,18 @@ func runNotifier(ctx context.Context, cfg *config.Config, configPath string, sil
 				return
 			case <-ticker.C:
 				runHealthCheck()
+			case <-authCheckNow:
+				if time.Since(lastAuthCheck) < authRecheckGap {
+					break
+				}
+				log.Println("Twitch rejected the access token, checking auth now")
+				checkAuth()
+			}
+			// Drop rejections from the check itself so a token that still fails
+			// waits for the next tick instead of looping.
+			select {
+			case <-authCheckNow:
+			default:
 			}
 		}
 	})

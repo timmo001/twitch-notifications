@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"twitch-notifications/utils"
@@ -54,6 +55,8 @@ type HelixClient struct {
 	httpClient  *http.Client
 	rateLimitMu sync.RWMutex
 	rateLimit   *RateLimitInfo // Track latest rate limit state
+	// onUnauthorized is called whenever Twitch rejects the access token.
+	onUnauthorized atomic.Pointer[func()]
 }
 
 // NewHelixClient creates a new Helix API client
@@ -76,6 +79,22 @@ func (hc *HelixClient) UpdateAccessToken(accessToken string) {
 	hc.accessToken = accessToken
 }
 
+// SetUnauthorizedHandler sets a callback run whenever Twitch rejects the
+// access token, so the caller can recover without waiting for its next check.
+func (hc *HelixClient) SetUnauthorizedHandler(handler func()) {
+	hc.onUnauthorized.Store(&handler)
+}
+
+func (hc *HelixClient) apiError(statusCode int, message string, body []byte) *APIError {
+	err := NewAPIError(statusCode, message, body)
+	if err.IsAuthError() {
+		if handler := hc.onUnauthorized.Load(); handler != nil && *handler != nil {
+			(*handler)()
+		}
+	}
+	return err
+}
+
 func (hc *HelixClient) getAccessToken() string {
 	hc.tokenMu.RLock()
 	defer hc.tokenMu.RUnlock()
@@ -94,7 +113,7 @@ func (hc *HelixClient) GetUserID(ctx context.Context) (string, error) {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return "", NewAPIError(resp.StatusCode, resp.ErrorMessage, nil)
+		return "", hc.apiError(resp.StatusCode, resp.ErrorMessage, nil)
 	}
 
 	if len(resp.Data.Users) == 0 {
@@ -162,7 +181,7 @@ func (hc *HelixClient) GetChannelsByUsernames(ctx context.Context, usernames []s
 		}
 
 		if resp.StatusCode != http.StatusOK {
-			return nil, NewAPIError(resp.StatusCode, resp.ErrorMessage, nil)
+			return nil, hc.apiError(resp.StatusCode, resp.ErrorMessage, nil)
 		}
 
 		// Store results in map with lowercase username as key for case-insensitive lookup
@@ -478,7 +497,7 @@ func (hc *HelixClient) CreateEventSubSubscription(ctx context.Context, sessionID
 	}
 
 	if resp.StatusCode != http.StatusAccepted {
-		return response, NewAPIError(resp.StatusCode, http.StatusText(resp.StatusCode), body)
+		return response, hc.apiError(resp.StatusCode, http.StatusText(resp.StatusCode), body)
 	}
 
 	return response, nil
@@ -515,7 +534,7 @@ func (hc *HelixClient) GetSubscribedBroadcasters(ctx context.Context, sessionID 
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
-			return nil, NewAPIError(resp.StatusCode, http.StatusText(resp.StatusCode), body)
+			return nil, hc.apiError(resp.StatusCode, http.StatusText(resp.StatusCode), body)
 		}
 
 		var result struct {
@@ -615,7 +634,7 @@ func (hc *HelixClient) GetFollowedLiveStreams(ctx context.Context, userID string
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
-			return nil, NewAPIError(resp.StatusCode, http.StatusText(resp.StatusCode), body)
+			return nil, hc.apiError(resp.StatusCode, http.StatusText(resp.StatusCode), body)
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 			resp.Body.Close()
@@ -692,7 +711,7 @@ func (hc *HelixClient) GetLiveStreams(ctx context.Context, channelIDs []string) 
 
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)
-			return nil, NewAPIError(resp.StatusCode, http.StatusText(resp.StatusCode), body)
+			return nil, hc.apiError(resp.StatusCode, http.StatusText(resp.StatusCode), body)
 		}
 
 		var result struct {

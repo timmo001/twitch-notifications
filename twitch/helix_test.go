@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -102,4 +103,33 @@ func TestHelixTokenRefreshDuringRequests(t *testing.T) {
 		})
 	}
 	wg.Wait()
+}
+
+func TestHelixReportsRejectedTokens(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		fmt.Fprint(w, `{"error":"Unauthorized","status":401,"message":"Invalid OAuth token"}`)
+	}))
+	defer server.Close()
+	client, err := NewHelixClient("client", "token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.httpClient.Transport = localHelixTransport{url: endpoint, transport: server.Client().Transport}
+	var rejected atomic.Int32
+	client.SetUnauthorizedHandler(func() { rejected.Add(1) })
+
+	if _, err := client.GetLiveStreams(t.Context(), []string{"1"}); err == nil {
+		t.Fatal("GetLiveStreams() succeeded with a rejected token")
+	}
+	if _, err := client.GetUserID(t.Context()); err == nil {
+		t.Fatal("GetUserID() succeeded with a rejected token")
+	}
+	if rejected.Load() != 2 {
+		t.Fatalf("handler ran %d times, want 2", rejected.Load())
+	}
 }
