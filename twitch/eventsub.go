@@ -140,6 +140,9 @@ func (esc *EventSubClient) dial(endpoint string) (*websocket.Conn, string, time.
 			return nil, "", 0, fmt.Errorf("invalid EventSub keepalive timeout")
 		}
 		timeout = time.Duration(*seconds) * time.Second
+		// Twitch sends a keepalive when the window is about to pass, so allow
+		// for delivery delay before treating the connection as lost.
+		timeout += timeout / 2
 	}
 	return conn, payload.Session.ID, timeout, nil
 }
