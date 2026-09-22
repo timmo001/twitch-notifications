@@ -43,6 +43,17 @@ notifications.
 Middle-click the widget to recheck notifications. Right-click it to restart
 the daemon.
 
+Configured channels update every five seconds, including while the panel is
+open. Other followed live channels and all live thumbnails refresh when the
+panel opens, then together at the daemon's `poll_interval` (60 seconds by
+default) while it stays open. A failed refresh keeps the last list.
+
+The plugin keeps each channel's last successful image in memory until a
+replacement loads, including across filtering and reopening the panel. A failed
+download keeps the previous image; the placeholder appears only when no image
+has loaded. The cache lasts until the plugin unloads or the shell restarts.
+Preview freshness also depends on Twitch updating its CDN images.
+
 The plugin exposes the `timmo.twitch` shell IPC target with `refresh`,
 `recheck`, `restart`, `open`, `close`, `show`, `hide`, and `toggle` methods:
 

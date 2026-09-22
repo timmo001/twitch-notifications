@@ -109,6 +109,7 @@ Panel {
     if (service) {
       service.refresh()
       service.refreshFollowedLive()
+      service.refreshThumbnails()
     }
     controller.show()
     Qt.callLater(function() {
@@ -166,6 +167,17 @@ Panel {
     id: revealTimer
     interval: 0
     onTriggered: root.scrollCursorIntoView()
+  }
+
+  Timer {
+    interval: root.service ? root.service.pollInterval * 1000 : 60000
+    running: root.opened
+    repeat: true
+    onTriggered: {
+      if (!root.service) return
+      root.service.refreshFollowedLive()
+      root.service.refreshThumbnails()
+    }
   }
 
   function activateAction(index) {
@@ -451,8 +463,8 @@ Panel {
               id: channelSurface
               required property int index
               required property var modelData
-              readonly property bool hasThumbnail: modelData.value.live === true
-                && String(modelData.value.thumbnailUrl || "") !== ""
+              readonly property var thumbnail: root.service
+                ? root.service.thumbnailFor(modelData.value) : null
               width: contentColumn.width
               implicitHeight: channelColumn.implicitHeight + Style.space(12)
               hasCursor: filterController.cursorIndex === filterController.indexForKey(modelData.key)
@@ -483,17 +495,16 @@ Panel {
                   Image {
                     id: channelThumbnail
                     anchors.fill: parent
-                    visible: channelSurface.hasThumbnail
-                    source: channelSurface.hasThumbnail ? String(modelData.value.thumbnailUrl) : ""
+                    source: channelSurface.thumbnail ? channelSurface.thumbnail.source : ""
                     asynchronous: true
-                    cache: false
+                    cache: true
                     fillMode: Image.PreserveAspectCrop
                   }
 
                   Text {
                     id: channelIcon
                     anchors.fill: parent
-                    visible: !channelSurface.hasThumbnail || channelThumbnail.status !== Image.Ready
+                    visible: channelThumbnail.status !== Image.Ready
                     text: modelData.value.live === true ? "" : "󰖪"
                     color: modelData.value.live === true ? "#ac77e5" : Qt.darker(root.contentForeground, 1.5)
                     font.family: root.contentFontFamily

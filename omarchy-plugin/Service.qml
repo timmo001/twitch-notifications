@@ -14,6 +14,8 @@ Item {
   property string errorText: ""
   property var actionCommand: []
   property string commandPath: "twitch-notifications"
+  property int pollInterval: 60
+  property var thumbnails: ({})
 
   readonly property bool refreshing: statusProcess.running
   readonly property bool restarting: restartFeedback.running
@@ -38,6 +40,7 @@ Item {
       statusState = ["live", "active", "inactive"].indexOf(payload.state) >= 0
         ? payload.state : (active ? "active" : "inactive")
       liveCount = Math.max(0, Number(payload.liveCount || 0))
+      if (Number(payload.pollInterval) > 0) pollInterval = Number(payload.pollInterval)
       channels = Array.isArray(payload.channels) ? payload.channels : []
       errorText = ""
     } catch (error) {
@@ -51,6 +54,36 @@ Item {
 
   function refreshFollowedLive() {
     if (!followedProcess.running) followedProcess.running = true
+  }
+
+  function thumbnailFor(channel) {
+    if (!channel || channel.live !== true || !channel.login) return null
+    var key = ":" + String(channel.login).trim().toLowerCase()
+    var thumbnail = thumbnails[key]
+    var url = String(channel.thumbnailUrl || "")
+    if (!thumbnail && url) {
+      thumbnail = thumbnailComponent.createObject(root)
+      thumbnails[key] = thumbnail
+    }
+    if (thumbnail && url) thumbnail.thumbnailUrl = url
+    return thumbnail || null
+  }
+
+  function refreshThumbnails() {
+    var live = channels.concat(followedLive)
+    var refreshed = {}
+    for (var i = 0; i < live.length; i++) {
+      var channel = live[i]
+      var key = ":" + String(channel.login || "").trim().toLowerCase()
+      if (channel.live !== true || refreshed[key] || !thumbnails[key]) continue
+      refreshed[key] = true
+      thumbnailFor(channel).refresh()
+    }
+  }
+
+  Component {
+    id: thumbnailComponent
+    Thumbnail {}
   }
 
   function runAction(command) {
@@ -121,17 +154,13 @@ Item {
       id: followedOutput
       waitForEnd: true
     }
+    // A failed refresh keeps the last list rather than emptying the open panel.
     onExited: function(exitCode) {
-      if (exitCode !== 0) {
-        root.followedLive = []
-        return
-      }
+      if (exitCode !== 0) return
       try {
         var payload = JSON.parse(String(followedOutput.text || "").trim())
-        root.followedLive = Array.isArray(payload) ? payload : []
-      } catch (error) {
-        root.followedLive = []
-      }
+        if (Array.isArray(payload)) root.followedLive = payload
+      } catch (error) {}
     }
   }
 
