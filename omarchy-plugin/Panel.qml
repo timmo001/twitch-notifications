@@ -232,7 +232,7 @@ Panel {
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onRefreshRequested: root.activateAction(0)
 
-      Flickable {
+      PanelFlickable {
         id: panelFlick
         anchors.fill: parent
         contentWidth: width
