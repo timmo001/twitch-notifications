@@ -248,8 +248,7 @@ Panel {
           width: panelFlick.width
           spacing: Style.space(12)
 
-          PanelHero {
-            width: parent.width
+          PanelHeader {
             title: "Twitch"
             meta: root.service && root.service.restarting ? "Restarting notifications"
               : (!root.service || root.service.statusState === "inactive"
