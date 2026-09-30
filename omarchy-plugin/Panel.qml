@@ -39,7 +39,7 @@ Panel {
   readonly property var navigationRows: buildNavigationRows()
   property bool liveExpanded: true
   property bool offlineExpanded: false
-  property bool followedExpanded: false
+  property bool followedExpanded: true
 
   function buildPanelRows() {
     var rows = []
@@ -104,7 +104,7 @@ Panel {
   function open() {
     liveExpanded = true
     offlineExpanded = false
-    followedExpanded = false
+    followedExpanded = true
     filterController.reset()
     if (service) {
       service.refresh()
