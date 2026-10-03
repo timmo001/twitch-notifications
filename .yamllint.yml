@@ -2,6 +2,7 @@
 extends: default
 
 ignore: |
+  .agents/skills/
   pnpm-lock.yaml
 
 rules:
