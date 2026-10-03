@@ -15,6 +15,13 @@
       "skillPath": "code-review/SKILL.md",
       "computedHash": "bc6af04ecee3f4a40dcacc77a8c6cd3046f3982159b9469eae49f30bb14d02cd"
     },
+    "effect-principles": {
+      "source": "timmo001/skills",
+      "ref": "27b9be15eab974784285bd8258419b42b671d7f5",
+      "sourceType": "github",
+      "skillPath": "effect-principles/SKILL.md",
+      "computedHash": "8d56fdf5c00665759b049647ea356b387c628eef9807ffdf6165b0413ac3ab31"
+    },
     "testing": {
       "source": "timmo001/skills",
       "ref": "37b262714357f1a3a629ab5092e3f6d0b4ed4d97",
