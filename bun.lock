@@ -15,7 +15,7 @@
       "devDependencies": {
         "@effect/tsgo": "0.51.1",
         "@oxlint/plugins": "1.87.0",
-        "@timmo001/oxlint-rules": "0.5.0",
+        "@timmo001/oxlint-rules": "0.6.2",
         "@types/bun": "1.4.2",
         "oxlint": "1.87.0",
         "oxlint-tsgolint": "7.0.2003",
@@ -158,7 +158,7 @@
 
     "@timmo001/effect-youtube": ["@timmo001/effect-youtube@workspace:packages/youtube"],
 
-    "@timmo001/oxlint-rules": ["@timmo001/oxlint-rules@0.5.0", "", { "peerDependencies": { "@oxlint/plugins": "1.86.0", "oxlint": "1.86.0" }, "bin": { "oxlint-rules": "dist/cli.js" } }, "sha512-5Tm1duCF2fzPRSwFGTOIDoR4qWXQIUtf0dYWt4ApoRbtJTPrPi4OZjdmhglaE/IoEaDSuUFp2Jx08Emmno/o1g=="],
+    "@timmo001/oxlint-rules": ["@timmo001/oxlint-rules@0.6.2", "", { "peerDependencies": { "@oxlint/plugins": "1.87.0", "oxlint": "1.87.0" }, "bin": { "oxlint-rules": "dist/cli.js" } }, "sha512-a2pte8DgmqpSVWcjPo21uabKypyfv0TtOdl36oUG+p17MlIs2zT7DiZhn0tnEXjdXna3KFnmzGEHvW0KspVlXA=="],
 
     "@types/bun": ["@types/bun@1.4.2", "", { "dependencies": { "bun-types": "1.4.2" } }, "sha512-GimotNn7+ZV0uVArItBbriZsR1oNf0+WTzPkdcFrzShI7k2norL0uzEaJT8T33dWr7O/c9ZDuAFQrctKCi72oQ=="],
 
