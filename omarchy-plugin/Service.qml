@@ -212,6 +212,10 @@ Item {
     id: watchProcess
     running: true
     command: root.command(["watch", "--json"])
+    // The watcher is a Bun program, whose garbage collector otherwise wakes
+    // every second while it waits for the next feed. Every 5 seconds still
+    // hands memory back soon after a feed arrives.
+    environment: ({ BUN_GC_TIMER_INTERVAL: "5000" })
     stdout: SplitParser {
       onRead: function(line) { root.applyFeed(line) }
     }
