@@ -5,6 +5,9 @@ Item {
 
   property string thumbnailUrl: ""
   property url source: ""
+  // The width the image is decoded at. Rows must ask for the same width to
+  // share the decoded image.
+  property int sourceWidth: 160
   property double lastRefresh: 0
   property bool firstCurrent: false
 
@@ -33,6 +36,7 @@ Item {
     id: first
     asynchronous: true
     cache: true
+    sourceSize.width: root.sourceWidth
     onStatusChanged: root.loaded(first)
   }
 
@@ -40,6 +44,7 @@ Item {
     id: second
     asynchronous: true
     cache: true
+    sourceSize.width: root.sourceWidth
     onStatusChanged: root.loaded(second)
   }
 }
