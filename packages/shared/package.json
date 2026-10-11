@@ -45,9 +45,9 @@
     "prepack": "bun run build"
   },
   "peerDependencies": {
-    "effect": "4.0.2"
+    "effect": "4.0.3"
   },
   "devDependencies": {
-    "effect": "4.0.2"
+    "effect": "4.0.3"
   }
 }
