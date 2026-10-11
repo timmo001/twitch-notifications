@@ -1,7 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import type { FeedItem } from "@timmo001/effect-upnext";
+import { DateTime } from "effect";
+import type {
+  Feed,
+  FeedItem,
+  SourceStatus,
+  WatchLaterPlaylist,
+} from "@timmo001/effect-upnext";
 import type { MediaItem } from "@timmo001/effect-upnext-shared";
-import { present, replaceSource } from "./Feed.js";
+import { present, replaceSource, sameFeed } from "./Feed.js";
 
 const live = (
   id: string,
@@ -86,5 +92,102 @@ describe("present", () => {
       "live:youtube:other",
       "saved:youtube:abc",
     ]);
+  });
+});
+
+describe("sameFeed", () => {
+  const checkedAt = DateTime.makeUnsafe("2026-10-11T09:00:00Z");
+  const later = DateTime.makeUnsafe("2026-10-11T09:01:00Z");
+
+  const feed = (
+    source: SourceStatus,
+    items: ReadonlyArray<FeedItem>,
+  ): Feed => ({
+    sources: [source],
+    items,
+  });
+
+  const playlist: WatchLaterPlaylist = {
+    url: "https://www.youtube.com/playlist?list=PL1",
+  };
+
+  const stream = live("twitch:someone", "twitch", {
+    tracked: true,
+    position: 0,
+    viewers: 10,
+  });
+
+  test("ignores a check that only moved checkedAt", () => {
+    expect(
+      sameFeed(
+        feed({ source: "twitch", state: "ok", checkedAt }, [stream]),
+        feed({ source: "twitch", state: "ok", checkedAt: later }, [stream]),
+      ),
+    ).toBe(true);
+  });
+
+  test("sees a change to an item, a source or the playlist", () => {
+    const before = feed({ source: "twitch", state: "ok", checkedAt }, [stream]);
+
+    expect(
+      sameFeed(
+        before,
+        feed({ source: "twitch", state: "ok", checkedAt: later }, [
+          live("twitch:someone", "twitch", {
+            tracked: true,
+            position: 0,
+            viewers: 11,
+          }),
+        ]),
+      ),
+    ).toBe(false);
+
+    expect(
+      sameFeed(
+        before,
+        feed(
+          {
+            source: "twitch",
+            state: "error",
+            message: "down",
+            checkedAt: later,
+          },
+          [stream],
+        ),
+      ),
+    ).toBe(false);
+
+    expect(
+      sameFeed(before, {
+        ...feed({ source: "twitch", state: "ok", checkedAt: later }, [stream]),
+        watchLaterPlaylist: playlist,
+      }),
+    ).toBe(false);
+  });
+
+  test("compares items with dates by value", () => {
+    const uploaded = (at: string): FeedItem => ({
+      item: {
+        id: "youtube:video",
+        source: "youtube",
+        kind: "upload",
+        title: "Video",
+        url: "https://www.youtube.com/watch?v=video",
+        publishedAt: DateTime.makeUnsafe(at),
+      },
+      tracked: true,
+      autoOpen: false,
+    });
+
+    expect(
+      sameFeed(
+        feed({ source: "youtube", state: "ok", checkedAt }, [
+          uploaded("2026-10-10T12:00:00Z"),
+        ]),
+        feed({ source: "youtube", state: "ok", checkedAt: later }, [
+          uploaded("2026-10-10T12:00:00Z"),
+        ]),
+      ),
+    ).toBe(true);
   });
 });

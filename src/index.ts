@@ -27,6 +27,7 @@ import {
 } from "@timmo001/effect-upnext";
 import { resolvePaths, UpnextConfig } from "./config/Config.js";
 import { importTwitchNotifications } from "./config/legacy.js";
+import { sameFeed } from "./feed/Feed.js";
 import { serve as serveDaemon } from "./server/Server.js";
 
 const upnext = Command.make("upnext").pipe(
@@ -178,9 +179,13 @@ const watch = Command.make(
       Effect.gen(function* () {
         const client = yield* UpnextClient;
 
-        yield* client
-          .WatchFeed()
-          .pipe(Stream.runForEach((value) => printFeed(value, json)));
+        // Each check moves checkedAt even when nothing changed. Printing
+        // those would have every watcher, such as the panel, redraw for
+        // nothing.
+        yield* client.WatchFeed().pipe(
+          Stream.changesWith(sameFeed),
+          Stream.runForEach((value) => printFeed(value, json)),
+        );
       }),
     ),
 ).pipe(Command.withDescription("Print the feed, then again after each change"));

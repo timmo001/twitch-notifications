@@ -2,9 +2,10 @@
 # in the background, outside the invoking shell or agent. Manage them with the
 # serve:* and dev:* mise tasks.
 
-# Uses its own socket so it never replaces the installed service's socket
+# Uses its own socket so it never replaces the installed service's socket.
+# BUN_GC_TIMER_INTERVAL matches the installed service, so it idles the same way.
 [daemons.daemon]
-run = 'UPNEXT_SOCK="$XDG_RUNTIME_DIR/upnext/dev.sock" exec bun run --watch src/index.ts serve'
+run = 'UPNEXT_SOCK="$XDG_RUNTIME_DIR/upnext/dev.sock" BUN_GC_TIMER_INTERVAL=5000 exec bun run --watch src/index.ts serve'
 retry = true
 
 [daemons.panel]

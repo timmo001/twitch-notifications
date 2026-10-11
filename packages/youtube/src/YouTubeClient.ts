@@ -31,10 +31,13 @@ const oembedEndpoint = "https://www.youtube.com/oembed";
 const maxPerRequest = 50;
 
 // Tag values stay strings, so a title like "1984" isn't read as a number.
+// Each entry's media group holds the full video description and more, none
+// of which is used, so it's kept as text rather than parsed.
 const parser = new XMLParser({
   ignoreAttributes: true,
   parseTagValue: false,
   isArray: (name) => name === "entry",
+  stopNodes: ["feed.entry.media:group"],
 });
 
 const FeedXml = Schema.Struct({

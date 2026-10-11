@@ -7,6 +7,10 @@ Wants=network-online.target
 [Service]
 Type=simple
 Environment=XDG_RUNTIME_DIR=%t
+# Bun's garbage collector otherwise wakes every second, even while idle.
+# Every 5 seconds still hands memory back soon after a check. Turning the
+# timer off would leave it held until the next check.
+Environment=BUN_GC_TIMER_INTERVAL=5000
 ExecStart=/usr/bin/upnext serve
 # The Effect runtime exits 130 when systemd stops it.
 SuccessExitStatus=130

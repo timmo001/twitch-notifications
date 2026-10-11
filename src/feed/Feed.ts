@@ -3,6 +3,7 @@ import {
   Context,
   DateTime,
   Effect,
+  Equal,
   HashSet,
   Layer,
   Option,
@@ -115,6 +116,18 @@ export const replaceSource = (
   ),
   items: replaceItems(feed, isFrom(status.source), items),
 });
+
+const withoutCheckedAt = (feed: Feed) => ({
+  ...feed,
+  sources: Arr.map(feed.sources, (status) =>
+    Struct.omit(status, ["checkedAt"]),
+  ),
+});
+
+// Whether two feeds show the same things. A check that finds nothing new
+// only moves checkedAt, which watchers don't need to hear about.
+export const sameFeed = (a: Feed, b: Feed) =>
+  Equal.equals(withoutCheckedAt(a), withoutCheckedAt(b));
 
 export interface FeedStoreService {
   // The feed as clients see it.

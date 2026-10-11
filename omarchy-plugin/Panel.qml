@@ -56,7 +56,13 @@ Panel {
   // The item the right-click menu is open on.
   property var menuEntry: null
 
-  readonly property var panelRows: buildPanelRows()
+  // The rows the feed calls for. panelRows only takes them over when they
+  // list something different, so a check that only moved viewer counts
+  // doesn't rebuild every row. Rows read those counts from the latest feed.
+  readonly property var latestRows: buildPanelRows()
+  property var panelRows: []
+  onLatestRowsChanged: syncRows()
+  Component.onCompleted: syncRows()
   readonly property var filteredHeaderActions: filterRows("header-action")
   readonly property var filteredActions: filterRows("action")
   readonly property var filteredAttention: filterRows("attention")
@@ -71,18 +77,18 @@ Panel {
     return sourceColors[source] || contentForeground
   }
 
-  function ago(iso) {
-    var minutes = Math.floor((now - Date.parse(iso)) / 60000)
+  function ago(iso, at) {
+    var minutes = Math.floor((at - Date.parse(iso)) / 60000)
     if (!(minutes >= 0)) return ""
     if (minutes < 60) return minutes + "m ago"
     if (minutes < 60 * 24) return Math.floor(minutes / 60) + "h ago"
     return Math.floor(minutes / (60 * 24)) + "d ago"
   }
 
-  function startsAt(iso) {
+  function startsAt(iso, at) {
     var date = new Date(iso)
     if (isNaN(date.getTime())) return "Upcoming"
-    var sameDay = date.toDateString() === new Date(now).toDateString()
+    var sameDay = date.toDateString() === new Date(at).toDateString()
     return "Starts " + (sameDay ? "" : date.toLocaleDateString(Qt.locale(), "ddd d MMM") + " ")
       + date.toLocaleTimeString(Qt.locale(), "HH:mm")
   }
@@ -96,15 +102,23 @@ Panel {
     return "󰈈 " + text
   }
 
-  function detailFor(entry) {
+  // The row's third line, as of `at`.
+  function detailFor(entry, at) {
     var item = entry.item
     var published = item.publishedAt ? String(item.publishedAt) : ""
     if (item.kind === "live")
       return [viewers(item.viewers), item.category || "Live"]
         .filter(function(part) { return part !== "" }).join(" · ")
-    if (item.kind === "upcoming") return startsAt(published)
-    if (item.kind === "saved") return published ? "Saved " + ago(published) : "Saved"
-    return ago(published)
+    if (item.kind === "upcoming") return startsAt(published, at)
+    if (item.kind === "saved") return published ? "Saved " + ago(published, at) : "Saved"
+    return ago(published, at)
+  }
+
+  // What the filter matches besides the names: a live stream's category.
+  // Viewer counts and times change too often to be worth rebuilding the rows
+  // for.
+  function filterDetailFor(entry) {
+    return entry.item.kind === "live" ? (entry.item.category || "") : ""
   }
 
   function sectionFor(entry) {
@@ -150,7 +164,7 @@ Panel {
         value: entry,
         primaryText: item.channel ? item.channel.name : item.title,
         secondaryText: item.channel ? item.title : "",
-        tertiaryText: detailFor(entry)
+        tertiaryText: filterDetailFor(entry)
       })
     }
     var playlist = service && service.connected ? service.watchLaterPlaylist : null
@@ -167,6 +181,22 @@ Panel {
       })
     }
     return rows
+  }
+
+  function sameRows(a, b) {
+    if (a.length !== b.length) return false
+    for (var i = 0; i < a.length; i++) {
+      var x = a[i]
+      var y = b[i]
+      if (x.key !== y.key || x.kind !== y.kind || x.section !== y.section
+          || x.primaryText !== y.primaryText || x.secondaryText !== y.secondaryText
+          || (x.tertiaryText || "") !== (y.tertiaryText || "")) return false
+    }
+    return true
+  }
+
+  function syncRows() {
+    if (!panelRows || !sameRows(panelRows, latestRows)) panelRows = latestRows
   }
 
   function filterRows(kind) {
@@ -889,7 +919,9 @@ Panel {
             CursorSurface {
               id: itemSurface
               required property var modelData
-              readonly property var entry: modelData.value
+              // The latest feed's copy, so viewer counts and auto-open
+              // changes show without the row being rebuilt.
+              readonly property var entry: (root.service && root.service.entriesById[modelData.value.item.id]) || modelData.value
               readonly property var item: entry.item
               readonly property bool live: item.kind === "live"
               readonly property var thumbnail: root.service ? root.service.thumbnailFor(item) : null
@@ -927,6 +959,9 @@ Panel {
                     id: itemThumbnail
                     anchors.fill: parent
                     source: itemSurface.thumbnail ? itemSurface.thumbnail.source : ""
+                    // The same width the service decodes at, so this shares
+                    // its image instead of decoding the full size.
+                    sourceSize.width: root.service ? root.service.thumbnailWidth : 160
                     asynchronous: true
                     cache: true
                     fillMode: Image.PreserveAspectCrop
@@ -972,7 +1007,7 @@ Panel {
                   Text {
                     width: parent.width
                     visible: text !== ""
-                    text: String(itemSurface.modelData.tertiaryText || "")
+                    text: root.detailFor(itemSurface.entry, root.now)
                     color: Qt.darker(root.contentForeground, 1.25)
                     font.family: root.contentFontFamily
                     font.pixelSize: Style.font.caption

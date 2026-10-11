@@ -22,6 +22,9 @@ Item {
   property string socketPath: ""
   property var restartCommand: ["systemctl", "--user", "restart", "upnext.service"]
   property var thumbnails: ({})
+  // Thumbnails are decoded at this width, enough for the panel's 64px rows on
+  // a 2x display, rather than at the 320px to 440px they're served at.
+  readonly property int thumbnailWidth: 160
 
   // Brand colours, lifted so they read on a dark bar.
   readonly property var sourceColors: ({ twitch: "#a970ff", youtube: "#ff4040" })
@@ -29,6 +32,13 @@ Item {
   readonly property bool restarting: restartFeedback.running
   readonly property bool actionBusy: actionProcess.running || restarting
   readonly property bool canRecheck: connected && !actionBusy
+  // The latest feed's entry for each item ID, so rows can show viewer counts
+  // that change every check without being rebuilt.
+  readonly property var entriesById: {
+    var map = {}
+    for (var i = 0; i < items.length; i++) map[items[i].item.id] = items[i]
+    return map
+  }
   readonly property var liveItems: items.filter(function(entry) { return entry.item.kind === "live" })
   readonly property var trackedLive: liveItems.filter(function(entry) { return entry.tracked === true })
   readonly property int liveCount: trackedLive.length
@@ -69,15 +79,36 @@ Item {
     return socketPath ? [commandPath, "--socket", socketPath].concat(args) : [commandPath].concat(args)
   }
 
+  // Whether two source lists say the same thing. checkedAt moves on every
+  // check and nothing here shows it.
+  function sameSources(a, b) {
+    if (a.length !== b.length) return false
+    for (var i = 0; i < a.length; i++) {
+      if (a[i].source !== b[i].source || a[i].state !== b[i].state
+          || (a[i].message || "") !== (b[i].message || "")) return false
+    }
+    return true
+  }
+
+  function samePlaylist(a, b) {
+    if (!a || !b) return a === b
+    return a.url === b.url && (a.title || "") === (b.title || "")
+  }
+
+  // Sources and the playlist keep their objects while they say the same
+  // thing, so the panel only rebuilds its sections when they change.
   function applyFeed(line) {
     var text = String(line || "").trim()
     if (!text) return
     try {
       var feed = JSON.parse(text)
+      var nextSources = Array.isArray(feed.sources) ? feed.sources : []
+      var nextItems = Array.isArray(feed.items) ? feed.items : []
+      var nextPlaylist = feed.watchLaterPlaylist || null
       itemsAboutToChange()
-      sources = Array.isArray(feed.sources) ? feed.sources : []
-      items = Array.isArray(feed.items) ? feed.items : []
-      watchLaterPlaylist = feed.watchLaterPlaylist || null
+      if (!sameSources(sources, nextSources)) sources = nextSources
+      items = nextItems
+      if (!samePlaylist(watchLaterPlaylist, nextPlaylist)) watchLaterPlaylist = nextPlaylist
       connected = true
       errorText = ""
       pruneThumbnails()
@@ -95,7 +126,7 @@ Item {
     if (!item || !item.thumbnailUrl) return null
     var thumbnail = thumbnails[item.id]
     if (!thumbnail) {
-      thumbnail = thumbnailComponent.createObject(root)
+      thumbnail = thumbnailComponent.createObject(root, { sourceWidth: thumbnailWidth })
       thumbnails[item.id] = thumbnail
     }
     thumbnail.thumbnailUrl = String(item.thumbnailUrl)
@@ -181,6 +212,10 @@ Item {
     id: watchProcess
     running: true
     command: root.command(["watch", "--json"])
+    // The watcher is a Bun program, whose garbage collector otherwise wakes
+    // every second while it waits for the next feed. Every 5 seconds still
+    // hands memory back soon after a feed arrives.
+    environment: ({ BUN_GC_TIMER_INTERVAL: "5000" })
     stdout: SplitParser {
       onRead: function(line) { root.applyFeed(line) }
     }
