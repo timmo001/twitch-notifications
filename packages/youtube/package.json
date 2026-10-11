@@ -1,6 +1,6 @@
 {
   "name": "@timmo001/effect-youtube",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "Effect client for YouTube: channel feeds, live and upcoming streams, oEmbed and upnext media items",
   "keywords": [
     "effect",
@@ -48,7 +48,7 @@
     "effect": "4.0.2"
   },
   "dependencies": {
-    "@timmo001/effect-upnext-shared": "2.1.0",
+    "@timmo001/effect-upnext-shared": "2.1.1",
     "fast-xml-parser": "5.11.2"
   },
   "devDependencies": {
