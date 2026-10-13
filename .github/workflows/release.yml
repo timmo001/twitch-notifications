@@ -43,7 +43,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    uses: timmo001/workflows/.github/workflows/publish-npm-package.yml@4684bb98d86ce0367028aa5d72fc8d178b102e63 # 20261012.0
+    uses: timmo001/workflows/.github/workflows/publish-npm-package.yml@816cb358079216167ccd46c8b55bd1386a57116a # 20261013.0
     with:
       bun-version: ${{ needs.tools.outputs.bun }}
       node-version: ${{ needs.tools.outputs.node }}
@@ -56,7 +56,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    uses: timmo001/workflows/.github/workflows/publish-jsr-package.yml@4684bb98d86ce0367028aa5d72fc8d178b102e63 # 20261012.0
+    uses: timmo001/workflows/.github/workflows/publish-jsr-package.yml@816cb358079216167ccd46c8b55bd1386a57116a # 20261013.0
     with:
       bun-version: ${{ needs.tools.outputs.bun }}
       package-path: packages/shared
@@ -71,7 +71,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    uses: timmo001/workflows/.github/workflows/publish-npm-package.yml@4684bb98d86ce0367028aa5d72fc8d178b102e63 # 20261012.0
+    uses: timmo001/workflows/.github/workflows/publish-npm-package.yml@816cb358079216167ccd46c8b55bd1386a57116a # 20261013.0
     with:
       bun-version: ${{ needs.tools.outputs.bun }}
       node-version: ${{ needs.tools.outputs.node }}
@@ -86,7 +86,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    uses: timmo001/workflows/.github/workflows/publish-jsr-package.yml@4684bb98d86ce0367028aa5d72fc8d178b102e63 # 20261012.0
+    uses: timmo001/workflows/.github/workflows/publish-jsr-package.yml@816cb358079216167ccd46c8b55bd1386a57116a # 20261013.0
     with:
       bun-version: ${{ needs.tools.outputs.bun }}
       package-path: packages/twitch
@@ -101,7 +101,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    uses: timmo001/workflows/.github/workflows/publish-npm-package.yml@4684bb98d86ce0367028aa5d72fc8d178b102e63 # 20261012.0
+    uses: timmo001/workflows/.github/workflows/publish-npm-package.yml@816cb358079216167ccd46c8b55bd1386a57116a # 20261013.0
     with:
       bun-version: ${{ needs.tools.outputs.bun }}
       node-version: ${{ needs.tools.outputs.node }}
@@ -116,7 +116,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    uses: timmo001/workflows/.github/workflows/publish-jsr-package.yml@4684bb98d86ce0367028aa5d72fc8d178b102e63 # 20261012.0
+    uses: timmo001/workflows/.github/workflows/publish-jsr-package.yml@816cb358079216167ccd46c8b55bd1386a57116a # 20261013.0
     with:
       bun-version: ${{ needs.tools.outputs.bun }}
       package-path: packages/youtube
@@ -132,7 +132,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    uses: timmo001/workflows/.github/workflows/publish-npm-package.yml@4684bb98d86ce0367028aa5d72fc8d178b102e63 # 20261012.0
+    uses: timmo001/workflows/.github/workflows/publish-npm-package.yml@816cb358079216167ccd46c8b55bd1386a57116a # 20261013.0
     with:
       bun-version: ${{ needs.tools.outputs.bun }}
       node-version: ${{ needs.tools.outputs.node }}
@@ -147,7 +147,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    uses: timmo001/workflows/.github/workflows/publish-jsr-package.yml@4684bb98d86ce0367028aa5d72fc8d178b102e63 # 20261012.0
+    uses: timmo001/workflows/.github/workflows/publish-jsr-package.yml@816cb358079216167ccd46c8b55bd1386a57116a # 20261013.0
     with:
       bun-version: ${{ needs.tools.outputs.bun }}
       package-path: packages/client
@@ -161,7 +161,7 @@ jobs:
       contents: write
       id-token: write
       attestations: write
-    uses: timmo001/workflows/.github/workflows/release-bun-cli-linux.yml@4684bb98d86ce0367028aa5d72fc8d178b102e63 # 20261012.0
+    uses: timmo001/workflows/.github/workflows/release-bun-cli-linux.yml@816cb358079216167ccd46c8b55bd1386a57116a # 20261013.0
     with:
       binary-name: upnext
       entrypoint: src/index.ts
@@ -194,7 +194,7 @@ jobs:
           ref: ${{ env.RELEASE_VERSION }}
 
       - name: Render PKGBUILD
-        uses: timmo001/workflows/.github/actions/prepare-arch-bin@4684bb98d86ce0367028aa5d72fc8d178b102e63 # 20261012.0
+        uses: timmo001/workflows/.github/actions/prepare-arch-bin@816cb358079216167ccd46c8b55bd1386a57116a # 20261013.0
         with:
           releaseVersion: ${{ env.RELEASE_VERSION }}
           packageName: upnext
@@ -218,7 +218,7 @@ jobs:
   arch-bin:
     name: Arch package (upnext-bin)
     needs: prepare-arch-bin
-    uses: timmo001/workflows/.github/workflows/build-arch-package.yml@4684bb98d86ce0367028aa5d72fc8d178b102e63 # 20261012.0
+    uses: timmo001/workflows/.github/workflows/build-arch-package.yml@816cb358079216167ccd46c8b55bd1386a57116a # 20261013.0
     with:
       package-name: upnext-bin
       package-files-artifact-name: arch-upnext-bin-${{ github.run_id }}-${{ github.run_attempt }}
@@ -233,7 +233,7 @@ jobs:
       contents: write
       id-token: write
       attestations: write
-    uses: timmo001/workflows/.github/workflows/attach-release-arch-package.yml@4684bb98d86ce0367028aa5d72fc8d178b102e63 # 20261012.0
+    uses: timmo001/workflows/.github/workflows/attach-release-arch-package.yml@816cb358079216167ccd46c8b55bd1386a57116a # 20261013.0
     with:
       artifact-name: ${{ needs.arch-bin.outputs.artifact-name }}
       release-tag: ${{ github.event.release.tag_name }}
