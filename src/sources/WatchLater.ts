@@ -73,15 +73,16 @@ export class WatchLater extends Context.Service<
         apiKey: Option.none(),
       }).pipe(Effect.provideService(HttpClient.HttpClient, http));
 
-      // Saved here, then the watch-later playlist.
+      // The watch-later playlist in its own order, then items saved here in
+      // the order they were saved.
       const playlistItems = yield* Ref.make<ReadonlyArray<MediaItem>>([]);
 
       const local = Effect.map(state.get, (current) => current.saved ?? []);
 
       const saved = Effect.zipWith(
-        local,
         Ref.get(playlistItems),
-        (here, there) => Arr.unionWith(here, there, (a, b) => a.id === b.id),
+        local,
+        (there, here) => Arr.unionWith(there, here, (a, b) => a.id === b.id),
       );
 
       const publish = Effect.flatMap(saved, (items) =>

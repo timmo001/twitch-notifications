@@ -41,6 +41,8 @@ const publishedMillis = ({ item }: FeedItem) =>
 
 const isLive = ({ item }: FeedItem) => item.kind === "live";
 
+const isSaved = ({ item }: FeedItem) => item.kind === "saved";
+
 // Orders live items only; every other pair compares equal here.
 const liveOrder = (rank: (feedItem: FeedItem) => number) =>
   Order.mapInput(Order.Number, (feedItem: FeedItem) =>
@@ -53,15 +55,16 @@ const feedOrder: Order.Order<FeedItem> = Order.combineAll([
   liveOrder(({ item, tracked }) => (tracked ? sourceRank[item.source] : 0)),
   liveOrder(({ position, tracked }) => (tracked ? (position ?? 0) : 0)),
   liveOrder(({ item, tracked }) => (tracked ? 0 : -(item.viewers ?? 0))),
-  Order.mapInput(Order.flip(Order.Number), publishedMillis),
+  // Saved items keep the order they're given in, which follows the playlist.
+  Order.mapInput(Order.flip(Order.Number), (feedItem: FeedItem) =>
+    isSaved(feedItem) ? 0 : publishedMillis(feedItem),
+  ),
 ]);
 
 const sourceOrder = Order.mapInput(
   Order.String,
   ({ source }: SourceStatus) => source,
 );
-
-const isSaved = ({ item }: FeedItem) => item.kind === "saved";
 
 // Saved items belong to the watch-later queue, whatever their source.
 const isFrom = (source: SourceStatus["source"]) => (feedItem: FeedItem) =>

@@ -93,6 +93,36 @@ describe("present", () => {
       "saved:youtube:abc",
     ]);
   });
+
+  test("keeps saved items in the order they're given, not by date", () => {
+    const saved = (id: string, addedAt: string): FeedItem => ({
+      item: {
+        id,
+        source: "youtube",
+        kind: "saved",
+        title: id,
+        url: `https://example.com/${id}`,
+        publishedAt: DateTime.makeUnsafe(addedAt),
+      },
+      tracked: true,
+      autoOpen: false,
+    });
+
+    const feed = present({
+      sources: [],
+      items: [
+        saved("youtube:first", "2026-10-01T09:00:00Z"),
+        saved("youtube:second", "2026-10-11T09:00:00Z"),
+        saved("youtube:third", "2026-10-05T09:00:00Z"),
+      ],
+    });
+
+    expect(feed.items.map(({ item }) => item.id)).toEqual([
+      "youtube:first",
+      "youtube:second",
+      "youtube:third",
+    ]);
+  });
 });
 
 describe("sameFeed", () => {
