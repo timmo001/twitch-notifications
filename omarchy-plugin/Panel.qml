@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import Quickshell
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 Panel {
@@ -15,7 +16,7 @@ Panel {
   property var service: null
 
   readonly property var barIdentity: hostWidget || root
-  readonly property color contentForeground: bar ? bar.foreground : Color.foreground
+  readonly property color contentForeground: bar ? bar.foreground : Commons.Color.foreground
   readonly property string contentFontFamily: bar ? bar.fontFamily : Style.font.family
   readonly property var sourceColors: service ? service.sourceColors : ({ twitch: "#a970ff", youtube: "#ff4040" })
   readonly property color liveColor: sourceColors.twitch
@@ -639,7 +640,7 @@ Panel {
                     tooltipText: modelData.actionIndex === 4 && root.service && root.service.restarting
                       ? "Restarting Up Next" : modelData.primaryText
                     foreground: modelData.actionIndex === 4
-                      ? (root.bar ? root.bar.urgent : Color.urgent)
+                      ? (root.bar ? root.bar.urgent : Commons.Color.urgent)
                       : Qt.darker(root.contentForeground, 1.15)
                     fontFamily: root.contentFontFamily
                     hasCursor: filterController.cursorIndex === filterController.indexForKey(modelData.key)
@@ -712,7 +713,7 @@ Panel {
           SectionHeading {
             visible: root.filteredAttention.length > 0
             title: "NEEDS ATTENTION"
-            foreground: root.bar ? root.bar.urgent : Color.urgent
+            foreground: root.bar ? root.bar.urgent : Commons.Color.urgent
             fontFamily: root.contentFontFamily
           }
 
@@ -730,7 +731,7 @@ Panel {
                 implicitHeight: attentionColumn.implicitHeight + Style.space(12)
                 hasCursor: filterController.cursorIndex === filterController.indexForKey(modelData.key)
                 foreground: root.contentForeground
-                accent: root.bar ? root.bar.urgent : Color.urgent
+                accent: root.bar ? root.bar.urgent : Commons.Color.urgent
 
                 Row {
                   anchors.left: parent.left
@@ -1078,7 +1079,7 @@ Panel {
 
       Popup {
         id: itemMenu
-        readonly property var menuBorderSpec: Border.localOrSurfaceSpec("popups", "border", Color.popups.border, Color.popups.border, Style.normalBorderWidth)
+        readonly property var menuBorderSpec: Border.localOrSurfaceSpec("popups", "border", Commons.Color.popups.border, Commons.Color.popups.border, Style.normalBorderWidth)
         width: Style.space(260)
         implicitHeight: itemMenu.contentItem.contentHeight + topPadding + bottomPadding
         padding: Style.spacing.hairline
@@ -1089,7 +1090,7 @@ Panel {
         focus: true
 
         background: BorderSurface {
-          color: Color.popups.background
+          color: Commons.Color.popups.background
           borderSpec: itemMenu.menuBorderSpec
           radius: Style.cornerRadius
         }
