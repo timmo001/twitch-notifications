@@ -1,8 +1,11 @@
 [Unit]
 Description=upnext media feed daemon
 Documentation=https://github.com/timmo001/upnext
-After=network-online.target
+# Starts with the desktop session, once the compositor has passed WAYLAND_DISPLAY
+# and OMARCHY_HOST to systemd, so auto-open can launch a browser.
+After=network-online.target graphical-session.target
 Wants=network-online.target
+PartOf=graphical-session.target
 
 [Service]
 Type=simple
@@ -18,4 +21,4 @@ Restart=on-failure
 RestartSec=5
 
 [Install]
-WantedBy=default.target
+WantedBy=graphical-session.target

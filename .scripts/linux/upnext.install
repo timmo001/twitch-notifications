@@ -52,8 +52,10 @@ _upnext_configure_user_service() {
   # stopped on purpose stays stopped.
   local activate="${1:-start}"
 
+  # reenable drops links from older releases, which were wanted by
+  # default.target and started before the desktop session.
   if command -v systemctl >/dev/null 2>&1; then
-    systemctl --global enable "$_upnext_unit" >/dev/null 2>&1 || true
+    systemctl --global reenable "$_upnext_unit" >/dev/null 2>&1 || true
   fi
 
   local user
@@ -61,14 +63,14 @@ _upnext_configure_user_service() {
 
   if [ -n "$user" ]; then
     _upnext_user_systemctl "$user" daemon-reload &&
-      _upnext_user_systemctl "$user" enable "$_upnext_unit" &&
+      _upnext_user_systemctl "$user" reenable "$_upnext_unit" &&
       _upnext_user_systemctl "$user" "$activate" "$_upnext_unit"
   fi
 
   cat <<'EOF'
 upnext: installed user service upnext.service
 
-- Enabled for future logins with systemd user sessions.
+- Enabled for future desktop sessions (graphical-session.target).
 - If the installing user has a running user session, it was started for them too.
 - Each user's settings live in ~/.config/upnext/config.yml and channels.yml. A twitch-notifications config is imported on first run.
 

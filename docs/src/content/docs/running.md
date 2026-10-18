@@ -7,7 +7,7 @@ description: Run Up Next as a systemd user service, read its logs and keep it ru
 
 ## User service
 
-The packages install `upnext.service` as a user unit. The Arch package enables it for every user's future logins. To start it now, or after installing a `.deb` or `.rpm`:
+The packages install `upnext.service` as a user unit. It starts with your desktop session (`graphical-session.target`), after the compositor has passed variables such as `WAYLAND_DISPLAY` and `OMARCHY_HOST` to systemd, so it can open streams in a browser. It doesn't run in a session without a desktop, such as SSH. The Arch package enables it for every user's future desktop sessions. To start it now, or after installing a `.deb` or `.rpm`:
 
 ```bash
 systemctl --user daemon-reload
