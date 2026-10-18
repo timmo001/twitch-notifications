@@ -72,6 +72,18 @@ export class Desktop extends Context.Service<Desktop, DesktopService>()(
       const home = yield* Config.String("HOME").pipe(Config.withDefault(""));
       const browser = browserCommand(host);
 
+      // setsid -f hides the launcher's exit code, so a browser with nowhere to
+      // show a window would otherwise be logged as opened.
+      const waylandDisplay = yield* Config.option(
+        Config.String("WAYLAND_DISPLAY"),
+      );
+
+      const x11Display = yield* Config.option(Config.String("DISPLAY"));
+
+      const hasDisplay = Option.isSome(
+        Option.orElse(waylandDisplay, () => x11Display),
+      );
+
       const icon = (yield* fs
         .exists(iconFile)
         .pipe(Effect.orElseSucceed(() => false)))
@@ -106,12 +118,18 @@ export class Desktop extends Context.Service<Desktop, DesktopService>()(
 
       // setsid detaches the browser, so it outlives the daemon.
       const open = (url: string) =>
-        run("setsid", ["-f", browser, url]).pipe(
-          Effect.tap(() => Effect.logInfo("Opened", url)),
-          Effect.catch((error) =>
-            Effect.logWarning("Could not open", url, error),
-          ),
-        );
+        hasDisplay
+          ? run("setsid", ["-f", browser, url]).pipe(
+              Effect.tap(() => Effect.logInfo("Opened", url)),
+              Effect.catch((error) =>
+                Effect.logWarning("Could not open", url, error),
+              ),
+            )
+          : Effect.logWarning(
+              "Could not open",
+              url,
+              "no WAYLAND_DISPLAY or DISPLAY, so the service started before the desktop session. Run systemctl --user restart upnext",
+            );
 
       const playSound = Effect.gen(function* () {
         const { soundFile } = yield* config.settings;
