@@ -46,12 +46,12 @@
     "prepack": "bun run build"
   },
   "peerDependencies": {
-    "effect": "4.0.5"
+    "effect": "4.0.6"
   },
   "dependencies": {
     "@timmo001/effect-upnext-shared": "2.1.1"
   },
   "devDependencies": {
-    "effect": "4.0.5"
+    "effect": "4.0.6"
   }
 }
