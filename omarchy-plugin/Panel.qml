@@ -251,8 +251,10 @@ Panel {
         toggleKey: "toggle:" + section.kind,
         markAllKey: "mark-all:" + section.kind,
         // What "mark all as watched" covers: the section's videos that match
-        // the filter, collapsed or not.
-        markable: rows.filter(function(entry) { return canMarkWatched(entry.value) }),
+        // the filter, collapsed or not. Watch later has no mark all.
+        markable: section.kind === "saved"
+          ? []
+          : rows.filter(function(entry) { return canMarkWatched(entry.value) }),
         rows: shown ? rows : [],
         // A last row that opens the section's playlist, such as Watch later's.
         link: shown ? link : null
