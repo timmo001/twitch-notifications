@@ -11,6 +11,7 @@ import {
   Ref,
   Schema,
   Stream,
+  String as Str,
   Struct,
   SynchronizedRef,
 } from "effect";
@@ -266,16 +267,111 @@ export class UpnextState extends Context.Service<
         ),
       );
 
+      // When both machines change the library before it syncs, Syncthing
+      // keeps the copy changed last and renames the other to
+      // library.sync-conflict-<date>-<time>-<device>.json. Watched IDs only
+      // ever grow, so the other copy's are added back and the copy removed.
+      const isConflictCopy = (name: string) =>
+        Str.startsWith(`${path.basename(libraryFile, ".json")}.sync-conflict-`)(
+          name,
+        ) && Str.endsWith(".json")(name);
+
+      const readConflicts = fs.readDirectory(dataDirectory).pipe(
+        Effect.map(Arr.filter(isConflictCopy)),
+        Effect.flatMap((names) =>
+          Effect.forEach(names, (name) => {
+            const file = path.join(dataDirectory, name);
+
+            return readLibrary(file).pipe(
+              Effect.map(Option.map(({ library }) => ({ file, library }))),
+              Effect.catch((cause) =>
+                Effect.logWarning(`Couldn't read ${file}`, cause.message).pipe(
+                  Effect.as(Option.none()),
+                ),
+              ),
+            );
+          }),
+        ),
+        Effect.map(Arr.getSomes),
+        Effect.catch((cause) =>
+          Effect.logWarning(
+            `Couldn't look for conflicts in ${dataDirectory}`,
+            cause.message,
+          ).pipe(Effect.as([])),
+        ),
+        provide,
+      );
+
+      const absorbConflicts = SynchronizedRef.modifyEffect(ref, (current) =>
+        Effect.gen(function* () {
+          const conflicts = yield* readConflicts;
+
+          if (!Arr.isReadonlyArrayNonEmpty(conflicts)) {
+            return [false, current] as const;
+          }
+
+          const fresh = Option.match(yield* loadLibrary, {
+            onNone: () => current,
+            onSome: ({ library }) => mergeLibrary(current, library),
+          });
+
+          const next: State = {
+            ...fresh,
+            watched: Arr.union(
+              fresh.watched ?? [],
+              Arr.flatMap(conflicts, ({ library }) => library.watched ?? []),
+            ),
+          };
+
+          yield* writeLibrary(
+            yield* encodeLibrary(next).pipe(
+              Effect.mapError(toStateError("encode", libraryFile)),
+            ),
+          );
+
+          yield* Effect.forEach(
+            conflicts,
+            ({ file }) =>
+              fs
+                .remove(file)
+                .pipe(
+                  Effect.catch((cause) =>
+                    Effect.logWarning(`Couldn't remove ${file}`, cause.message),
+                  ),
+                ),
+            { discard: true },
+          );
+
+          yield* Effect.logInfo(
+            "Added back what was watched in sync conflict copies",
+            conflicts.length,
+          );
+
+          return [true, next] as const;
+        }),
+      ).pipe(
+        Effect.flatMap((changed) =>
+          changed ? PubSub.publish(changes, undefined) : Effect.void,
+        ),
+        Effect.catch((error) =>
+          Effect.logWarning("Couldn't merge library conflicts", error.message),
+        ),
+      );
+
       // Watches the directory rather than the file, as sync tools replace the
       // file instead of writing to it.
       yield* fs.makeDirectory(dataDirectory, { recursive: true, mode: 0o700 });
 
+      yield* absorbConflicts;
+
       yield* fs.watch(dataDirectory).pipe(
-        Stream.filter(
-          (event) => path.basename(event.path) === path.basename(libraryFile),
-        ),
+        Stream.filter((event) => {
+          const name = path.basename(event.path);
+
+          return name === path.basename(libraryFile) || isConflictCopy(name);
+        }),
         Stream.debounce(Duration.millis(500)),
-        Stream.runForEach(() => reload),
+        Stream.runForEach(() => Effect.andThen(reload, absorbConflicts)),
         Effect.catch((cause) =>
           Effect.logWarning(
             `Stopped watching ${dataDirectory} for library changes`,

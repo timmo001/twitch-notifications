@@ -101,7 +101,7 @@ The config, state and data directories are only readable by you (`0700`) and the
 
 To share what you've watched and saved between computers, sync the `~/.local/share/upnext` directory with a tool such as Syncthing. The daemon reloads `library.json` when it changes, so a video marked watched on one computer disappears from the other. Before each change, it reads the file again, so it doesn't overwrite what came in from another computer.
 
-If both computers change the library within a few seconds of each other, your sync tool may keep only one of the changes.
+If both computers change the library before it syncs, such as when one starts up before it has caught up with the other, Syncthing keeps one copy and saves the other as `library.sync-conflict-*.json`. The daemon adds back anything marked watched in that copy, then deletes it. Other sync tools may keep only one of the changes.
 
 ## Socket path
 

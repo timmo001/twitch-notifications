@@ -102,4 +102,58 @@ describe("UpnextState", () => {
 
     expect(result.tokens).toEqual(onlyTokens);
   });
+
+  test("adds back what was watched in a Syncthing conflict copy", async () => {
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectory({ prefix: "upnext-state-" });
+        const dataDirectory = path.join(root, "data", "upnext");
+        const libraryFile = path.join(dataDirectory, "library.json");
+
+        const conflictFile = path.join(
+          dataDirectory,
+          "library.sync-conflict-20261023-080337-GWRJZI7.json",
+        );
+
+        yield* fs.makeDirectory(dataDirectory, { recursive: true });
+        yield* fs.writeFileString(
+          libraryFile,
+          JSON.stringify({ watched: ["a", "b"] }),
+        );
+        yield* fs.writeFileString(
+          conflictFile,
+          JSON.stringify({ watched: ["a", "c"] }),
+        );
+
+        return yield* Effect.gen(function* () {
+          yield* UpnextState;
+
+          return {
+            library: yield* summarise(libraryFile),
+            conflictLeft: yield* fs.exists(conflictFile),
+          };
+        }).pipe(
+          Effect.provide(UpnextState.layer),
+          Effect.provideService(
+            ConfigProvider.ConfigProvider,
+            ConfigProvider.fromEnvRecord({
+              HOME: root,
+              XDG_STATE_HOME: path.join(root, "state"),
+              XDG_DATA_HOME: path.join(root, "data"),
+            }),
+          ),
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(Layer.mergeAll(BunFileSystem.layer, BunPath.layer)),
+      ),
+    );
+
+    expect(result).toEqual({
+      library: { twitch: undefined, watched: ["a", "b", "c"], saved: [] },
+      conflictLeft: false,
+    });
+  });
 });
