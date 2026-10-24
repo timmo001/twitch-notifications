@@ -11,6 +11,8 @@ Item {
   property var items: []
   // The YouTube playlist saved videos go in, with its url and title, or null.
   property var watchLaterPlaylist: null
+  // Tracked channels that aren't live, in channels.yml order.
+  property var offline: []
 
   // Sent just before a feed update replaces the items, so a panel can keep
   // its place.
@@ -108,6 +110,7 @@ Item {
       itemsAboutToChange()
       if (!sameSources(sources, nextSources)) sources = nextSources
       items = nextItems
+      offline = Array.isArray(feed.offline) ? feed.offline : []
       if (!samePlaylist(watchLaterPlaylist, nextPlaylist)) watchLaterPlaylist = nextPlaylist
       connected = true
       errorText = ""

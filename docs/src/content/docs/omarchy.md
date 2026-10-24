@@ -33,6 +33,7 @@ The panel shows the feed in sections:
 
 - **Live**: your channels from `channels.yml`, Twitch first, each in the order you listed them.
 - **Followed**: other channels you follow or subscribe to that are live, by viewers. Collapsed when none are live.
+- **Offline**: your Twitch channels from `channels.yml` that aren't live. Opening one goes to its past broadcasts. Collapsed until you open it.
 - **Upcoming**: scheduled streams from your YouTube channels. Collapsed when there are none.
 - **Watch later**: links you've saved with `upnext queue add` or the item menu, and the videos in your [watch-later playlist](/setup/youtube#use-a-playlist-for-watch-later) if you've set one. Its last row opens the playlist on YouTube. Collapsed when it's empty.
 - **New uploads**: the last 7 days of uploads from your YouTube channels.

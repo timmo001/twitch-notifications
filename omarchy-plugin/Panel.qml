@@ -38,17 +38,19 @@ Panel {
     ""
   ]
   // Live channels from channels.yml, in its order, then other followed
-  // channels by viewers. Uploads split the same way. Each section lists the
-  // sources it comes from, so it can show it's loading until they report.
+  // channels by viewers, then the tracked ones that aren't live. Uploads split
+  // the same way. Each section lists the sources it comes from, so it can show
+  // it's loading until they report.
   readonly property var sections: [
     { kind: "live", title: "LIVE", sources: ["twitch", "youtube"], empty: "No one you track is live" },
     { kind: "followed", title: "FOLLOWED", sources: ["twitch"], empty: "No one else you follow is live" },
+    { kind: "offline", title: "OFFLINE", sources: ["twitch"], empty: "Everyone you track is live" },
     { kind: "upcoming", title: "UPCOMING", sources: ["youtube"], empty: "No upcoming streams" },
     { kind: "saved", title: "WATCH LATER", sources: [], empty: "Nothing saved for later" },
     { kind: "upload", title: "NEW UPLOADS", sources: ["youtube"], empty: "All caught up" },
     { kind: "other", title: "OTHER UPLOADS", sources: ["youtube"], empty: "All caught up" }
   ]
-  readonly property var defaultExpanded: ({ live: true, followed: true, upcoming: false, upload: true, other: false, saved: true })
+  readonly property var defaultExpanded: ({ live: true, followed: true, offline: false, upcoming: false, upload: true, other: false, saved: true })
   property var expanded: defaultExpanded
   // The source the panel was last opened on, so its bind can close it again.
   property string focusedSource: ""
@@ -166,6 +168,32 @@ Panel {
         primaryText: item.channel ? item.channel.name : item.title,
         secondaryText: item.channel ? item.title : "",
         tertiaryText: filterDetailFor(entry)
+      })
+    }
+    // Offline channels take an item's shape, so they share its row. Opening
+    // one goes to its past broadcasts.
+    var offline = service && service.connected ? service.offline : []
+    for (var m = 0; m < offline.length; m++) {
+      var channel = offline[m]
+      var id = "offline:" + channel.source + ":" + channel.channel.id
+      rows.push({
+        key: "item:" + id,
+        kind: "item",
+        section: "offline",
+        value: {
+          item: {
+            id: id,
+            source: channel.source,
+            kind: "offline",
+            title: "Offline · open past broadcasts",
+            url: channel.url,
+            channel: channel.channel
+          },
+          tracked: true,
+          autoOpen: channel.autoOpen
+        },
+        primaryText: channel.channel.name,
+        secondaryText: "Offline · open past broadcasts"
       })
     }
     var playlist = service && service.connected ? service.watchLaterPlaylist : null
