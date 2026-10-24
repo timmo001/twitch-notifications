@@ -289,10 +289,11 @@ Panel {
     expanded = next
   }
 
-  // Followed and Watch later start collapsed when there's nothing in them.
+  // Followed, Upcoming, Watch later and Other uploads open when there's
+  // something in them, and start collapsed when there isn't.
   function openingExpanded() {
     var next = Object.assign({}, defaultExpanded)
-    var collapsible = ["followed", "saved"]
+    var collapsible = ["followed", "upcoming", "saved", "other"]
     for (var i = 0; i < collapsible.length; i++) {
       var kind = collapsible[i]
       next[kind] = panelRows.some(function(entry) {
@@ -316,8 +317,7 @@ Panel {
   }
 
   // Opens on Twitch live channels or YouTube uploads, with the first one
-  // selected and its section scrolled to the top. Other uploads stay
-  // collapsed.
+  // selected and its section scrolled to the top.
   function openOn(source) {
     var wanted = source === "twitch" ? ["live", "followed"] : ["upload", "other"]
     var expand = source === "twitch" ? ["live"] : ["upload"]
