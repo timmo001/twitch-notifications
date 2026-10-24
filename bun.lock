@@ -25,10 +25,10 @@
     },
     "packages/client": {
       "name": "@timmo001/effect-upnext",
-      "version": "2.1.1",
+      "version": "2.2.0",
       "dependencies": {
         "@effect/platform-node-shared": "4.0.6",
-        "@timmo001/effect-upnext-shared": "2.1.1",
+        "@timmo001/effect-upnext-shared": "2.2.0",
       },
       "devDependencies": {
         "effect": "4.0.6",
@@ -39,7 +39,7 @@
     },
     "packages/shared": {
       "name": "@timmo001/effect-upnext-shared",
-      "version": "2.1.1",
+      "version": "2.2.0",
       "devDependencies": {
         "effect": "4.0.6",
       },
@@ -49,9 +49,9 @@
     },
     "packages/twitch": {
       "name": "@timmo001/effect-twitch",
-      "version": "2.1.1",
+      "version": "2.2.0",
       "dependencies": {
-        "@timmo001/effect-upnext-shared": "2.1.1",
+        "@timmo001/effect-upnext-shared": "2.2.0",
       },
       "devDependencies": {
         "effect": "4.0.6",
@@ -62,9 +62,9 @@
     },
     "packages/youtube": {
       "name": "@timmo001/effect-youtube",
-      "version": "2.1.1",
+      "version": "2.2.0",
       "dependencies": {
-        "@timmo001/effect-upnext-shared": "2.1.1",
+        "@timmo001/effect-upnext-shared": "2.2.0",
         "fast-xml-parser": "5.11.2",
       },
       "devDependencies": {

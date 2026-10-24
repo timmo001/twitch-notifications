@@ -1,6 +1,6 @@
 {
   "name": "@timmo001/effect-twitch",
-  "version": "2.1.1",
+  "version": "2.2.0",
   "description": "Effect client for Twitch: sign-in, Helix, EventSub live notifications and upnext media items",
   "keywords": [
     "effect",
@@ -49,7 +49,7 @@
     "effect": "4.0.6"
   },
   "dependencies": {
-    "@timmo001/effect-upnext-shared": "2.1.1"
+    "@timmo001/effect-upnext-shared": "2.2.0"
   },
   "devDependencies": {
     "effect": "4.0.6"
