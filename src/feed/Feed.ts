@@ -16,6 +16,7 @@ import type { MediaKind } from "@timmo001/effect-upnext-shared";
 import type {
   Feed,
   FeedItem,
+  OfflineChannel,
   SourceStatus,
   WatchLaterPlaylist,
 } from "@timmo001/effect-upnext";
@@ -103,11 +104,13 @@ export const present = (feed: Feed): Feed => {
   };
 };
 
-// Replaces one source's status and items, leaving the other sources alone.
+// Replaces one source's status, items and offline channels, leaving the other
+// sources alone.
 export const replaceSource = (
   feed: Feed,
   status: SourceStatus,
   items: ReadonlyArray<FeedItem>,
+  offline: ReadonlyArray<OfflineChannel> = [],
 ): Feed => ({
   ...feed,
   sources: Arr.sort(
@@ -118,6 +121,10 @@ export const replaceSource = (
     sourceOrder,
   ),
   items: replaceItems(feed, isFrom(status.source), items),
+  offline: Arr.appendAll(
+    Arr.filter(feed.offline ?? [], ({ source }) => source !== status.source),
+    offline,
+  ),
 });
 
 const withoutCheckedAt = (feed: Feed) => ({
@@ -140,13 +147,15 @@ export interface FeedStoreService {
   // The current feed, then each change.
   readonly changes: Stream.Stream<Feed>;
   // Replaces the source's slice and returns the items that weren't in it
-  // before, so notifications and auto-open happen in one place.
+  // before, so notifications and auto-open happen in one place. Sources that
+  // know their tracked channels pass the ones that aren't live.
   readonly setSource: (
     status: SourceStatus,
     items: ReadonlyArray<FeedItem>,
+    offline?: ReadonlyArray<OfflineChannel>,
   ) => Effect.Effect<ReadonlyArray<FeedItem>>;
-  // Replaces the source's status and keeps its items, such as after a
-  // failed check.
+  // Replaces the source's status and keeps its items and offline channels,
+  // such as after a failed check.
   readonly setStatus: (status: SourceStatus) => Effect.Effect<void>;
   // Replaces the watch-later queue.
   readonly setSaved: (items: ReadonlyArray<FeedItem>) => Effect.Effect<void>;
@@ -164,13 +173,17 @@ export class FeedStore extends Context.Service<FeedStore, FeedStoreService>()(
   static readonly layer = Layer.effect(
     FeedStore,
     Effect.gen(function* () {
-      const ref = yield* SubscriptionRef.make<Feed>({ sources: [], items: [] });
+      const ref = yield* SubscriptionRef.make<Feed>({
+        sources: [],
+        items: [],
+        offline: [],
+      });
 
       return FeedStore.of({
         get: Effect.map(SubscriptionRef.get(ref), present),
         reported: SubscriptionRef.get(ref),
         changes: Stream.map(SubscriptionRef.changes(ref), present),
-        setSource: (status, items) =>
+        setSource: (status, items, offline) =>
           SubscriptionRef.modify(ref, (feed) => {
             const before = HashSet.fromIterable(
               Arr.map(
@@ -181,7 +194,7 @@ export class FeedStore extends Context.Service<FeedStore, FeedStoreService>()(
 
             return [
               Arr.filter(items, ({ item }) => !HashSet.has(before, item.id)),
-              replaceSource(feed, status, items),
+              replaceSource(feed, status, items, offline),
             ];
           }).pipe(Effect.withSpan("FeedStore.setSource")),
         setStatus: (status) =>
@@ -190,6 +203,10 @@ export class FeedStore extends Context.Service<FeedStore, FeedStoreService>()(
               feed,
               status,
               Arr.filter(feed.items, isFrom(status.source)),
+              Arr.filter(
+                feed.offline ?? [],
+                ({ source }) => source === status.source,
+              ),
             ),
           ).pipe(Effect.withSpan("FeedStore.setStatus")),
         setSaved: (items) =>

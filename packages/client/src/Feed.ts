@@ -1,5 +1,9 @@
 import { Schema } from "effect";
-import { MediaItem, Source } from "@timmo001/effect-upnext-shared";
+import {
+  MediaChannel,
+  MediaItem,
+  Source,
+} from "@timmo001/effect-upnext-shared";
 
 // A media item with what the daemon knows about it.
 export const FeedItem = Schema.Struct({
@@ -43,6 +47,19 @@ export const WatchLaterPlaylist = Schema.Struct({
 
 export type WatchLaterPlaylist = typeof WatchLaterPlaylist.Type;
 
+// A channel in channels.yml that isn't live.
+export const OfflineChannel = Schema.Struct({
+  source: Source,
+  channel: MediaChannel,
+  // Where opening it goes, such as the channel's past broadcasts.
+  url: Schema.String,
+  // Where the channel is listed in channels.yml.
+  position: Schema.Int,
+  autoOpen: Schema.Boolean,
+});
+
+export type OfflineChannel = typeof OfflineChannel.Type;
+
 // Live items first: tracked Twitch channels, then tracked YouTube channels,
 // each in channels.yml order, then everything else live by viewers. Then
 // upcoming, uploads and saved items, newest first.
@@ -51,6 +68,9 @@ export const Feed = Schema.Struct({
   items: Schema.Array(FeedItem),
   // Missing when there's no watch-later playlist set.
   watchLaterPlaylist: Schema.optional(WatchLaterPlaylist),
+  // Tracked channels that aren't live, in channels.yml order. Only Twitch
+  // reports them. Missing from daemons that don't send them.
+  offline: Schema.optional(Schema.Array(OfflineChannel)),
 });
 
 export type Feed = typeof Feed.Type;

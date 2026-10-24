@@ -24,6 +24,7 @@ import {
 import { HttpClient } from "effect/http";
 import {
   authorizeUrl,
+  channelUrl,
   exchangeCode,
   make as makeTwitchClient,
   maxEventSubChannels,
@@ -34,10 +35,12 @@ import {
   type TwitchCredentials,
   type TwitchStream,
   type TwitchTokens,
+  type TwitchUser,
 } from "@timmo001/effect-twitch";
 import {
   type ChannelCandidate,
   type FeedItem,
+  type OfflineChannel,
   SourceError,
   type SourceState,
 } from "@timmo001/effect-upnext";
@@ -224,7 +227,12 @@ export class TwitchSource extends Context.Service<
         });
 
       const checkWith =
-        (client: TwitchClientService, owner: TokenOwner) => (open: boolean) =>
+        (
+          client: TwitchClientService,
+          owner: TokenOwner,
+          users: HashMap.HashMap<string, TwitchUser>,
+        ) =>
+        (open: boolean) =>
           Effect.gen(function* () {
             const settings = yield* config.settings;
             const channels = (yield* config.channels).twitch;
@@ -245,28 +253,62 @@ export class TwitchSource extends Context.Service<
               { concurrency: "unbounded" },
             );
 
-            const items = Arr.map(
-              Arr.dedupeWith(
-                Arr.appendAll(trackedLive, followed),
-                (a: TwitchStream, b: TwitchStream) => a.user_id === b.user_id,
-              ),
-              (stream): FeedItem =>
-                Option.match(
-                  HashMap.get(tracked, loginKey(stream.user_login)),
-                  {
-                    onNone: () => ({
-                      item: toMediaItem(stream),
-                      tracked: false,
-                      autoOpen: false,
+            const streams = Arr.dedupeWith(
+              Arr.appendAll(trackedLive, followed),
+              (a: TwitchStream, b: TwitchStream) => a.user_id === b.user_id,
+            );
+
+            const items = Arr.map(streams, (stream): FeedItem =>
+              Option.match(HashMap.get(tracked, loginKey(stream.user_login)), {
+                onNone: () => ({
+                  item: toMediaItem(stream),
+                  tracked: false,
+                  autoOpen: false,
+                }),
+                onSome: ({ open, position }) => ({
+                  item: toMediaItem(stream),
+                  tracked: true,
+                  position,
+                  autoOpen: open,
+                }),
+              }),
+            );
+
+            const live = HashSet.fromIterable(
+              Arr.map(streams, ({ user_login }) => loginKey(user_login)),
+            );
+
+            // A channel Twitch doesn't know keeps its name from channels.yml.
+            const offline = Arr.filterMap(
+              channels,
+              ({ name, open }, position) => {
+                const login = loginKey(name);
+
+                if (HashSet.has(live, login)) {
+                  return Result.failVoid;
+                }
+
+                const user = HashMap.get(users, login);
+                const url = channelUrl(login);
+
+                return Result.succeed<OfflineChannel>({
+                  source: "twitch",
+                  channel: {
+                    id: Option.match(user, {
+                      onNone: () => login,
+                      onSome: ({ id }) => id,
                     }),
-                    onSome: ({ open, position }) => ({
-                      item: toMediaItem(stream),
-                      tracked: true,
-                      position,
-                      autoOpen: open,
+                    name: Option.match(user, {
+                      onNone: () => name,
+                      onSome: ({ display_name }) => display_name,
                     }),
+                    url,
                   },
-                ),
+                  url: `${url}/videos?filter=archives&sort=time`,
+                  position,
+                  autoOpen: open,
+                });
+              },
             );
 
             const now = yield* DateTime.now;
@@ -274,6 +316,7 @@ export class TwitchSource extends Context.Service<
             const added = yield* feed.setSource(
               { source: "twitch", state: "ok", checkedAt: now },
               items,
+              offline,
             );
 
             const fresh = yield* freshItems(items, added, now);
@@ -360,23 +403,33 @@ export class TwitchSource extends Context.Service<
         yield* Effect.logInfo("Signed in to Twitch as", owner.login);
         yield* Ref.set(authNotified, false);
 
-        const check = checkWith(client, owner);
+        // Names for offline channels, and IDs for EventSub. Changing channels
+        // starts a new session, so these stay current.
+        const channels = (yield* config.channels).twitch;
+
+        const users = HashMap.fromIterable(
+          Arr.map(
+            yield* client.users(
+              Arr.map(channels, ({ name }) => loginKey(name)),
+            ),
+            (user) => [loginKey(user.login), user] as const,
+          ),
+        );
+
+        const check = checkWith(client, owner, users);
         yield* Ref.set(current, Option.some({ client, owner, check }));
         yield* check(false);
 
         // EventSub only makes a channel show up sooner. Polling catches
         // everything else.
-        const channels = (yield* config.channels).twitch;
-
-        const users = yield* client.users(
-          Arr.take(
-            Arr.map(channels, ({ name }) => loginKey(name)),
-            maxEventSubChannels,
-          ),
-        );
-
         const eventSub = client
-          .streamOnline(Arr.map(users, ({ id }) => id))
+          .streamOnline(
+            Arr.getSomes(
+              Arr.map(Arr.take(channels, maxEventSubChannels), ({ name }) =>
+                Option.map(HashMap.get(users, loginKey(name)), ({ id }) => id),
+              ),
+            ),
+          )
           .pipe(
             Stream.tap((event) =>
               Effect.logInfo("Went live", event.broadcaster_user_login),
