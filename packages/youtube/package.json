@@ -45,13 +45,13 @@
     "prepack": "bun run build"
   },
   "peerDependencies": {
-    "effect": "4.0.6"
+    "effect": "4.0.7"
   },
   "dependencies": {
     "@timmo001/effect-upnext-shared": "2.2.0",
     "fast-xml-parser": "5.11.2"
   },
   "devDependencies": {
-    "effect": "4.0.6"
+    "effect": "4.0.7"
   }
 }
