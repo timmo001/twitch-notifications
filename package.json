@@ -20,10 +20,10 @@
     "build:packages": "bun run --cwd packages/shared build && bun run --cwd packages/twitch build && bun run --cwd packages/youtube build && bun run --cwd packages/client build"
   },
   "dependencies": {
-    "@effect/platform-bun": "4.1.0",
+    "@effect/platform-bun": "4.1.1",
     "@timmo001/effect-upnext": "workspace:*",
     "@timmo001/effect-upnext-shared": "workspace:*",
-    "effect": "4.1.0",
+    "effect": "4.1.1",
     "@timmo001/effect-twitch": "workspace:*",
     "@timmo001/effect-youtube": "workspace:*"
   },
