@@ -45,13 +45,13 @@
     "prepack": "bun run build"
   },
   "dependencies": {
-    "@effect/platform-node-shared": "4.1.0",
+    "@effect/platform-node-shared": "4.1.1",
     "@timmo001/effect-upnext-shared": "2.2.0"
   },
   "peerDependencies": {
-    "effect": "4.1.0"
+    "effect": "4.1.1"
   },
   "devDependencies": {
-    "effect": "4.1.0"
+    "effect": "4.1.1"
   }
 }
