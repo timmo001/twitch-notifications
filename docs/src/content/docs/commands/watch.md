@@ -19,6 +19,8 @@ USAGE
   upnext watch [flags]
 
 FLAGS
+  --json    Print each feed as one line of JSON
+
+INHERITED FLAGS
   --socket string    Path to the daemon socket (default: $UPNEXT_SOCK, then $XDG_RUNTIME_DIR/upnext/upnext.sock)
-  --json             Print each feed as one line of JSON
 ```

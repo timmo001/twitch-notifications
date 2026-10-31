@@ -19,7 +19,9 @@ USAGE
   upnext recheck [flags]
 
 FLAGS
-  --socket string    Path to the daemon socket (default: $UPNEXT_SOCK, then $XDG_RUNTIME_DIR/upnext/upnext.sock)
   --source choice    Only check this source (choices: twitch, youtube, link)
   --open             Open live channels set to auto-open, even if already live
+
+INHERITED FLAGS
+  --socket string    Path to the daemon socket (default: $UPNEXT_SOCK, then $XDG_RUNTIME_DIR/upnext/upnext.sock)
 ```

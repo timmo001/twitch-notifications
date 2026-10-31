@@ -18,7 +18,7 @@ DESCRIPTION
 USAGE
   upnext queue <subcommand> [flags]
 
-FLAGS
+INHERITED FLAGS
   --socket string    Path to the daemon socket (default: $UPNEXT_SOCK, then $XDG_RUNTIME_DIR/upnext/upnext.sock)
 ```
 
@@ -35,7 +35,9 @@ ARGUMENTS
   url string    What to watch later
 
 FLAGS
+  --title string    Title to show instead of the one looked up
+  --json            Print the saved item as JSON
+
+INHERITED FLAGS
   --socket string    Path to the daemon socket (default: $UPNEXT_SOCK, then $XDG_RUNTIME_DIR/upnext/upnext.sock)
-  --title string     Title to show instead of the one looked up
-  --json             Print the saved item as JSON
 ```

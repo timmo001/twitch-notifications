@@ -18,6 +18,6 @@ DESCRIPTION
 USAGE
   upnext serve [flags]
 
-FLAGS
+INHERITED FLAGS
   --socket string    Path to the daemon socket (default: $UPNEXT_SOCK, then $XDG_RUNTIME_DIR/upnext/upnext.sock)
 ```

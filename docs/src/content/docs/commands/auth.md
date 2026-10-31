@@ -21,6 +21,6 @@ USAGE
 ARGUMENTS
   source choice    The source to sign in to: twitch or youtube
 
-FLAGS
+INHERITED FLAGS
   --socket string    Path to the daemon socket (default: $UPNEXT_SOCK, then $XDG_RUNTIME_DIR/upnext/upnext.sock)
 ```

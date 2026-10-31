@@ -21,6 +21,6 @@ USAGE
 ARGUMENTS
   id... string    Item IDs, as shown by feed --json
 
-FLAGS
+INHERITED FLAGS
   --socket string    Path to the daemon socket (default: $UPNEXT_SOCK, then $XDG_RUNTIME_DIR/upnext/upnext.sock)
 ```
