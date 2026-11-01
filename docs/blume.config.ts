@@ -34,11 +34,5 @@ export default defineConfig(
         },
       ],
     },
-    theme: {
-      accent: {
-        light: "#6d28d9",
-        dark: "#8b5cf6",
-      },
-    },
   }),
 );
